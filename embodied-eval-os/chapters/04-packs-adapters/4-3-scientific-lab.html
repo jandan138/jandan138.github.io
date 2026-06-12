@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>scientific_lab：把禁词关进笼子 · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="4-3">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 4 · Packs &amp; Adapters · 4-3</div>
+        <h1>scientific_lab：把禁词关进笼子</h1>
+        <p class="lede">还记得那张禁词表吗——<code>Pipette</code>、<code>TubeRack</code>、<code>Contamination</code>，一旦出现在 <code>core/</code> 里就让 CI 失败。但 EOS 偏偏要做一个科学实验室评测。这些词总得有地方住。这一节看 EOS 的旗舰 pack <span class="term">scientific_lab</span>：它正是那个"笼子"——禁词在这里<i>合法地</i>存在，被关进一个 core 看不见的角落，既表达了领域语义，又不污染契约骨架。</p>
+
+        <h2 id="hierarchy">三层任务层级</h2>
+        <p><code>scientific_lab</code> 不是一堆零散任务的集合，它有清晰的能力层级，从最原子的物理动作往上长：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">scientific_lab 任务层级</span><button class="cp">复制</button></div><pre><code>atomic physical abilities      # 原子物理能力：抓、放、对准
+   ↓
+scientific operation skills    # 科学操作技能：拧盖、移液
+   ↓
+long-horizon scientific tasks  # 长程科学任务：完整实验流程</code></pre></div>
+        <p>前三个任务很具体：pick/place 一支离心管、拧开管盖、移液（aspiration/dispense）的 proxy。这条层级和 <a href="../00-orientation/0-1-why-eos.html">五条能力轴</a>里的 task execution / generalization 直接对应——越往上越考验长程规划与跨场景泛化。</p>
+
+        <h2 id="proxy-primitives">proxy 原语：全是 semantic，全对模型不可见</h2>
+        <p>pack 的核心是一组<b>语义代理原语</b>（proxy primitives），它们就是 <a href="4-1-pack-contract.html">4.1</a> 讲的"subclass 三个 ABC"的真身：<span class="term">PipetteProxyPrimitive</span>、<span class="term">ThreadedCapProxyPrimitive</span>、<span class="term">LiquidVolumeProxyPrimitive</span>、<span class="term">RackSlotPrimitive</span>、<span class="term">InstrumentStatePrimitive</span>……名字里全是禁词，但它们住在 <code>scenario_packs/scientific_lab/process_primitives/</code>，core 永远碰不到。</p>
+        <p>去读 <span class="term">process_primitives/pipette_process.py</span>，你会看到这些原语有两个不可省的标记：</p>
+        <div class="code" data-lang="python"><div class="code-h"><span class="fn">scenario_packs/scientific_lab/process_primitives/pipette_process.py</span><button class="cp">复制</button></div><pre><code>FIDELITY_TIER = "semantic_process_proxy"
+
+class PipetteLiquidMaterialPrimitive(ProcessPrimitive):
+    primitive_id = "scientific_lab.pipette_liquid_material_proxy"
+
+    def update(self, physical_state: PhysicalStateProjection) -&gt; dict[str, Any]:
+        del physical_state                       # 注意：根本没用物理状态
+        source_volume_ul = self.initial_volume_ul - self.aspirated_volume_ul
+        return {
+            "schema": "scientific_lab.pipette_liquid_material_state.v0",
+            "fidelity_tier": FIDELITY_TIER,        # = semantic_process_proxy
+            "source": "scenario_process_proxy",
+            "volume_error_ul": float(abs(self.target_volume_ul
+                                         - self.aspirated_volume_ul)),
+            "evaluator_visible": True,
+            "model_visible": False,                # 对被测模型不可见
+            "privileged_state_label": "evaluator_only",
+        }</code></pre></div>
+        <p>两件事值得盯住。第一，每个 proxy 都打 <code>fidelity_tier="semantic_process_proxy"</code>——它在用词上就主动招认"我是语义代理，不是高保真物理"。第二，全部标 <code>model_visible=False</code> + <code>privileged_state_label="evaluator_only"</code>：这些过程状态是<b>特权状态</b>，只给 evaluator 看，绝不喂给被测模型。注意那行 <code>del physical_state</code>——这个 liquid proxy 甚至没去读物理投影，它的"体积误差"完全来自一个解析的语义模型。</p>
+
+        <div class="bridge eb">
+          <div class="c-h"><span class="tag">从 EBench 看</span> 这就是被关进笼子的"领域语义"</div>
+          <p>在 EBench 里，"移液成功"这种判据是和 Isaac、GenManip 焊在一起的，谁也没拦着它往评测核心里渗。EOS 把同样的语义抽出来，强制它只能以 <code>model_visible=False</code> 的过程 proxy 形式、住在 pack 目录里。这就是 4.1 那句"contract 不靠基类靠组合 + leakage checker"的回报：禁词得到了一个合法住所，core 保持干净。</p>
+        </div>
+
+        <h2 id="projections">任务投影：从物理量到语义判据</h2>
+        <p>pack 还拥有一组<b>任务投影名</b>（projection names）——它们是 pack 从 <span class="term">PhysicalStateProjection</span> 里读出、再翻成语义判据的字段。例如：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">scientific_lab 任务投影（pack 拥有）</span><button class="cp">复制</button></div><pre><code>finger_cap_contact          # 手指是否接触到盖子
+finger_cap_contact_force    # 该接触的力
+gripper_aperture_response   # 夹爪开合响应
+tube_cap_body_retention     # 盖与管体是否保持连接
+thread_retention_support    # 螺纹保持支撑</code></pre></div>
+        <p>这些名字 core 一个都不认识——core 只存 schema-validated 的 payload（回忆 L5 <span class="term">TaskSemanticState</span> 的设计）。它们是 pack 私有的语义词汇。</p>
+
+        <h2 id="force-families">三个分开的力家族：缺力是 blocker，不是 0</h2>
+        <p>这是 <code>scientific_lab</code> 最能体现 EOS 纪律的地方。一个"盖子被保持住"的力，可能来自三个完全不同的来源，pack 把它们拆成<b>三个独立的力家族</b>，绝不混为一谈：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">三个分开的力家族</span><button class="cp">复制</button></div><pre><code>finger_cap_contact_force       # native 接触求解器算出的接触力
+retention_constraint_force     # primitive / equality / weld 等约束保持力
+mujoco_thread_contact_force    # MuJoCo 源的螺纹/接触保持力</code></pre></div>
+        <p>为什么非要拆？因为这三种力的<i>证据含义</i>不同：一个来自后端的真实接触求解，一个来自人为加的约束（weld/equality），一个来自 MuJoCo 特定的螺纹模型。把它们加在一起或互相替代，就等于在偷偷地"用约束力冒充接触力"——这会让一个"盖子拧紧了"的结论建立在错误的证据上。</p>
+        <p>更关键的纪律是：<b>当某个力向量缺失时，它是一个 blocker / coverage limit，不是 false negative，绝不允许填 0。</b> 这正是 <a href="../00-orientation/0-1-why-eos.html">No Silent Fallback</a> 在 pack 层的体现——某个后端测不出 <code>finger_cap_contact_force</code>，报告里就记一个 <span class="verdict blocked">blocked_missing_measurement</span>，而不是悄悄写 <code>force = 0.0</code> 然后判定"没接触"。</p>
+
+        <div class="callout warn">
+          <div class="c-h">填 0 是最隐蔽的谎言</div>
+          <p>"测不到力就当力是 0"看起来人畜无害，但它把一个<i>覆盖缺口</i>伪装成了一个<i>物理事实</i>（"确实没接触"）。下游评测会据此判任务失败——一个本可能成功的 episode，被一个缺失的传感器通道误杀。EOS 宁可让结果显式 <code>blocked</code>，也不接受这种沉默的零填充。</p>
+        </div>
+
+        <h2 id="forbidden-names-live-here">禁词正是在这里合法存在</h2>
+        <p>把前面几节串起来：<code>core/</code> 里写 <code>core.PipettePrimitive</code> / <code>core.ContaminationMetric</code> / <code>core.TubeRackSlot</code> 是<b>错的</b>（leakage checker 会拦）；而 <code>scenario_packs/scientific_lab/process_primitives/pipette_proxy.py</code> 里写 <code>PipetteProxyPrimitive</code> 是<b>对的</b>。同一个概念，位置决定合法性。这就是"把禁词关进笼子"的字面含义——禁词不是被消灭，而是被<i>定位</i>到唯一允许它存在的层。</p>
+
+        <h2 id="non-goals">Non-goals：它不假装是真化学</h2>
+        <p>最后，pack 文档明确列了一串<b>非目标</b>，把 claim 边界从一开始就钉死：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">scientific_lab Non-goals</span><button class="cp">复制</button></div><pre><code>NOT high-fidelity CFD
+NOT real chemical reaction simulation
+NOT true microfluidics
+NOT real thermal fracture
+NOT real-world safety certification
+NOT full AutoBio faithful reproduction inside Isaac</code></pre></div>
+
+        <div class="callout claim">
+          <div class="c-h">semantic proxy ≠ real CFD</div>
+          <p><code>scientific_lab</code> 的 <code>liquid_volume_error_ul</code> 来自一个 <code>semantic_process_proxy</code> 原语——一个解析的体积差，根本没跑流体求解。它证明的是<b>移液任务的语义结构可以被表达、被评测、且过程状态作为特权信息不泄漏给模型</b>。它<i>不</i>证明：真实的液体动力学、表面张力、微流控、或任何 CFD 量级的物理。"semantic liquid proxy metric" 与 "real fluid dynamics" 是两个量级的东西，报告里必须分开声明。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>三点：（1）<code>scientific_lab</code> 是旗舰 pack，任务分 atomic → skill → long-horizon 三层，proxy 原语（<code>PipetteProxyPrimitive</code> 等）全标 <code>fidelity_tier=semantic_process_proxy</code> + <code>model_visible=False</code>；（2）三个力家族（<code>finger_cap_contact_force</code> / <code>retention_constraint_force</code> / <code>mujoco_thread_contact_force</code>）必须分开，缺力是 <code>blocked</code> 不是 0；（3）禁词（Pipette/TubeRack/Contamination）正是在这个 pack 里<i>合法</i>存在——位置决定合法性，而 non-goals 把它和真 CFD/化学的边界钉死。</p>
+        <p>下一节，我们看姊妹 pack <span class="term">wetlab_safety</span>：当评测的对象不再是"任务做没做成"，而是"一个世界模型能不能在<i>损害发生之前</i>预测出危险"——评测的形态会发生什么质变。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

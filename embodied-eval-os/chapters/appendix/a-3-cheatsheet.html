@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>速查：六组件 / 八动词 / claim levels / 禁词 · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="a-3">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Appendix · Reference · a-3</div>
+        <h1>速查：六组件 / 八动词 / claim levels / 禁词</h1>
+        <p class="lede">把全书最常要"一眼确认"的硬清单压成几张紧凑表格：拆后端的六组件、RPF 八动词、由窄到宽的 claim levels、core 禁词、metric families、no-silent-fallback 的 blocked 状态、五条能力轴。日常写 PR、填 profile、划 claim boundary 时直接抄。</p>
+
+        <h2 id="six-components">六个 backend 组件</h2>
+        <table>
+          <thead><tr><th>组件</th><th>定义</th><th>例子</th></tr></thead>
+          <tbody>
+            <tr><td><b>platform</b></td><td>集成环境 / 仿真器外壳</td><td>Isaac Sim; MuJoCo; Genesis; split backend; real robot runtime</td></tr>
+            <tr><td><b>physics</b></td><td>物理转移动力学来源</td><td>PhysX; Newton; MuJoCo physics; Genesis physics; real world; reduced semantic physics</td></tr>
+            <tr><td><b>renderer</b></td><td>图像类观测来源</td><td>Isaac RTX; Blender Cycles; MuJoCo renderer; real camera; offline rerenderer</td></tr>
+            <tr><td><b>sensors</b></td><td>传感器读出来源</td><td>RGB; depth; segmentation; force/torque; tactile; proprioception; instrument logs</td></tr>
+            <tr><td><b>control</b></td><td>动作执行接口</td><td>joint action; ee-delta; action chunk; skill command; ROS control; articulation controller</td></tr>
+            <tr><td><b>process runtime</b></td><td>场景专属语义状态转移来源</td><td>reduced liquid model; device state machine; hazard event generator; conveyor; terrain transition</td></tr>
+          </tbody>
+        </table>
+        <p>跨后端实验<b>只改一个组件</b>：说"Compare PhysX vs MuJoCo physics while keeping task &amp; metric spec fixed"，不说"Compare Isaac vs MuJoCo"。</p>
+
+        <h2 id="eight-verbs">RPF 八动词</h2>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">runtime/provider_facade.py</span><button class="cp">复制</button></div><pre><code>materialize → reset → apply_state → apply_control → step → measure   ← 前七个驱动一次 run
+                                                              query   ← 取证据（telemetry/diagnostics/native dump）
+                                                              close   ← 收尾
+</code></pre></div>
+        <p>证据边界 = provider 产出的 artifact-backed L3 measurement。单个 <code>simulator</code> 字符串<b>不是</b> EOS 里的 backend identity。注意：这八个是 <b>EOS 的</b> RPF 动词，<i>不是</i> MetaSim 的（MetaSim 没有"恰好八个动词"的列表）。</p>
+
+        <h2 id="claim-levels">release claim levels（由窄到宽，不许跳级）</h2>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">docs/design/release-claim-boundary.md</span><button class="cp">复制</button></div><pre><code>contract implemented
+  → fixture conformance passed
+    → live SDK lane executed
+      → scenario evaluator executed
+        → suite diagnostic executed
+          → release live gate passed</code></pre></div>
+        <p>"a live SDK lane is not a benchmark score, and a scenario evaluator result is not backend parity."</p>
+
+        <h2 id="forbidden-names">core 禁词（check_core_leakage.py 扫 core/**/*.py）</h2>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">scripts/check_core_leakage.py（实际扫描的小写 token）</span><button class="cp">复制</button></div><pre><code>ebench  genmanip  lift2  isaac41  isaac_sim  autobio  r5a
+mjcf  mujoco  openpi  rdt  evalclient
+lab  wet_lab  pipette  centrifuge  tube_rack
+contamination  pcr_plate  vortex_mixer</code></pre></div>
+        <p>文档 core-boundaries.md §3 的权威超集更长（35+），还含：<code>Isaac41 IsaacSim RobotRuntime EmbodimentRuntime RobotState CanonicalRobotState UniversalController ControlStack HardwareReady SafeRobot URDF SAPIEN PhysX qpos qvel</code> 及 benchmark 专属 <code>Expert</code> 类。脚本表比 CLAUDE.md 短表更严。</p>
+
+        <h2 id="metric-families">metric families（core 定义，pack 实例化）</h2>
+        <table>
+          <thead><tr><th>family</th><th>测什么</th></tr></thead>
+          <tbody>
+            <tr><td><b>task_outcome</b></td><td>任务成败</td></tr>
+            <tr><td><b>procedure</b></td><td>流程步骤有效性</td></tr>
+            <tr><td><b>state_transition</b></td><td>状态转移正确性</td></tr>
+            <tr><td><b>precision</b></td><td>精度（体积误差、对位误差…）</td></tr>
+            <tr><td><b>hazard</b></td><td>危险检测/安全（DDR、FNR-H…）</td></tr>
+            <tr><td><b>prediction</b></td><td>世界模型预测（STE、DCS…）</td></tr>
+            <tr><td><b>planning</b></td><td>规划有用性</td></tr>
+            <tr><td><b>resource</b></td><td>资源成本</td></tr>
+            <tr><td><b>restoration</b></td><td>恢复（仅 metric-system.md）</td></tr>
+            <tr><td><b>generalization</b></td><td>泛化（README/scenario/reporting）</td></tr>
+          </tbody>
+        </table>
+        <p>family 是抽象的——<b>不许</b>出现 pipetting/contamination/conveyor 这类领域词。</p>
+
+        <h2 id="blocked">no-silent-fallback：blocked_* 状态</h2>
+        <p>缺证据要变成<b>显式状态</b>，绝不变成 <code>0.0 / [] / {} / success=true / score=1.0 / default pass</code>：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">显式 blocked / 不可用状态</span><button class="cp">复制</button></div><pre><code>blocked_missing_measurement   blocked_missing_state
+blocked_missing_artifact      blocked_invalid_action
+blocked_control_rejected      blocked_provider_unavailable
+blocked_optional_dependency   unsupported   not_evaluated</code></pre></div>
+        <p>报告必带<b>分母</b>与逐轴状态：<code>runtime_execution_rate / model_action_valid_rate / control_acceptance_rate / projection_ready_rate / evaluator_pass_rate / render_capture_rate / artifact_linkage_failures / blocked_* counts</code>。</p>
+
+        <h2 id="five-axes">五条能力轴</h2>
+        <table>
+          <thead><tr><th>轴</th><th>问的问题</th></tr></thead>
+          <tbody>
+            <tr><td><b>task execution</b></td><td>任务做没做成？</td></tr>
+            <tr><td><b>world prediction (WAM)</b></td><td>能不能预测世界接下来怎样？</td></tr>
+            <tr><td><b>safety reasoning</b></td><td>能不能预判危险、拒绝危险动作？</td></tr>
+            <tr><td><b>generalization</b></td><td>换物体/场景/后端/渲染/本体还行吗？</td></tr>
+            <tr><td><b>planning usefulness</b></td><td>世界模型真能帮上规划与安全决策吗？</td></tr>
+          </tbody>
+        </table>
+
+        <h2 id="more">配套页</h2>
+        <p>术语的一行释义在 <a href="a-1-glossary.html">a-1</a>，类住在哪个目录在 <a href="a-2-repo-map.html">a-2</a>，外部论文与后端的出处在 <a href="a-4-references.html">a-4</a>。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

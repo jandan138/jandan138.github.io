@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>证据高于能力面：trace 即产品边界 · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="1-1">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 1 · The Big Ideas · 1-1</div>
+        <h1>证据高于能力面：trace 即产品边界</h1>
+        <p class="lede">这是整个 EOS 的灵魂命题，值得你停下来盯着它看一会儿："<b>成功调用一个后端 SDK，不等于评测结论成立。</b>" 一台仿真器顺利启动、一个 episode 顺利跑完、一个数字顺利打印出来——这些都只是<i>发生了某件事</i>，而不是<i>证明了某件事</i>。这一节讲清 EOS 把全部重量压在哪里：不是能力面的宽度，而是<b>证据</b>的质量，而证据的载体，就是 trace。</p>
+
+        <h2 id="thesis">SDK 调用成功 ≠ 评测结论成立</h2>
+        <p>设想一个再常见不过的画面：你接好某个仿真器的 SDK，<code>env.reset()</code>、<code>env.step(action)</code> 一路绿灯，episode 跑到 done，脚本最后打印 <code>success_rate = 0.83</code>。看起来一切正常。但停一下问几个问题：那个 0.83 是在哪个 backend profile、哪个 seed、哪个 model checkpoint 下产生的？动作真的被 control 接受了，还是被默默 clip / reject 了？两个后端"都跑通了"，但它们的接触力、关节顺序、单位与符号约定可比吗？如果这些问题答不上来，那个 0.83 就<i>什么也没证明</i>——它只证明了"代码没崩"。</p>
+        <p>EOS 把这件事提到第一原则的高度：一个普通 benchmark 容易陷入比拼"我支持多少个仿真器、我的 support matrix 多宽"。而 EOS 明确<b>拒绝</b>在这条赛道上竞争——它该被衡量的，不是 simulator handler 的数量，而是它产出的<b>证据</b>能不能撑起一个结论。</p>
+
+        <div class="callout warn">
+          <div class="c-h">一个反面画面</div>
+          <p>"我们的评测框架支持 11 个仿真器、覆盖 1000+ 任务"——这句话听起来很强，但它讲的全是<b>能力面的宽度</b>，没有一个字是关于<i>任何一个</i>结论的证据强度。EOS 认为，宽度可以是营销，<b>证据</b>才是产品。</p>
+        </div>
+
+        <h2 id="trace-is-boundary">The trace design is the product boundary</h2>
+        <p>如果证据是产品，那么承载证据的结构就是产品的边界。EOS 有一句几乎是公司口号级别的话：</p>
+        <div class="callout note">
+          <div class="c-h">招牌句</div>
+          <p style="margin:0;font-style:italic">"The trace design is the product boundary."</p>
+        </div>
+        <p>换句话说：EOS 这个产品到底是什么、它的能力到哪儿为止——不取决于它接了多少个引擎，而取决于它的 <span class="term">trace</span> 设计能记录、能归一化、能审计到什么程度。一条 trace 能不能说清"这一步用了哪个 backend、动作有没有被接受、状态投影到不到位、评估器判了什么、还有哪些轴因为缺测量而被 block"——这才划定了 EOS 真正能给出的结论的边界。我们把这条线索引到 <a href="../03-trace-state/3-3-episode-trace.html">3.3</a> 去解剖那条具体的 <span class="term">EpisodeTrace</span>；这里你只需先接受它的<i>地位</i>：trace 不是评测的副产品，它<b>就是</b>评测的产品。</p>
+
+        <div class="bridge eb">
+          <div class="c-h"><span class="tag">从 EBench 看</span> EBench 给你一个分数，EOS 问你分数背后的 trace</div>
+          <p>EBench 最终交到你手里的，是一张 capability profile——几条轴上的分数。它已经比单一 success rate 进步很多了。但 EOS 再往前逼一步：它不满足于<i>分数</i>本身，它要<i>分数背后的那条 trace</i>。同样一个"成功"，EBench 说"成了"，EOS 会追问："在哪个 backend_profile_id、哪个 seed、哪个 model_profile_id 下成的？动作被 control 接受了吗？状态投影完整吗？把这些记下来、可审计——否则这个'成功'只是一个未署名的断言。" 你在 EBench 学到的多轴画像，是 EOS 的<i>起点</i>；EOS 的增量，是给每一格画像都配上可追溯的证据链。</p>
+        </div>
+
+        <h2 id="eval-science">评测科学早就这么要求了</h2>
+        <p>这套"别只给我数字，给我数字的来源与边界"的纪律，并不是 EOS 的发明——它是评测科学几十年的共识，只是 EOS 把它执行得更硬。</p>
+
+        <div class="bridge ev">
+          <div class="c-h"><span class="tag">从评测科学 看</span> 一个标量没有 seed 和 trace，就是弱证据</div>
+          <p>三个传统都指向同一件事。<span class="term">Model Cards</span>（Mitchell et al., FAT* 2019）要求模型随附其评测条件、适用范围与已知局限——一个分数必须带着它的<i>上下文</i>才有意义。<span class="term">Datasheets for Datasets</span>（Gebru et al., CACM 2021）对数据做同样的事：记录来源、构造、局限（provenance）。<span class="term">NeurIPS reproducibility checklist</span>（Pineau et al., JMLR 2021）则把"报告 seed、报告显著性、报告计算环境"写成了投稿纪律。一句话总结：<b>一个不带 seed、不带 trace、不带 provenance 的标量，是弱证据。</b></p>
+          <p>更尖锐的是 Henderson 等人的 <span class="term-i">"Deep Reinforcement Learning that Matters"</span>（AAAI 2018）：他们实测发现，仅仅换几个 random seed，强化学习的结果就能天差地别——extrinsic 与 intrinsic 的变异大到足以让"哪个方法更好"的结论翻盘。这正是 EOS 坚持每条 trace 都钉死 seed 与 determinism 环境的实证理由：<i>没有 seed 的成功率，可能只是某一次抽样的运气。</i></p>
+        </div>
+
+        <p>把这三条放在一起，EOS 的立场就清楚了：评测的可信度不取决于你跑了多大规模，而取决于你的每一个结论是否<b>可追溯、可复现、声明了边界</b>。这就是为什么 EOS 宁可只跑通一条 <span class="term">SemanticProxyBackend</span> 的 smoke、却把那条 trace 的元数据记得一丝不苟，也不愿用"支持 N 个引擎"的宽度去换取证据的深度。</p>
+
+        <h2 id="judged-by-evidence">EOS 该被怎样评判</h2>
+        <p>于是 EOS 给自己定下了一个不同寻常的成功标准。它<b>不</b>用以下指标自我衡量：simulator handler 的数量、support matrix 的宽度、接了多少个 model family。它用<b>证据质量</b>衡量自己：每个结论是否有 trace 撑腰、是否声明了 claim boundary、缺测量时是否诚实地 block 而不是填零。这条标准会在后面三节展开成可执行的纪律——<a href="../01-foundations/1-2-claim-boundary.html">1.2</a> 的"永不过度宣称"、<a href="../01-foundations/1-3-no-silent-fallback.html">1.3</a> 的"缺证据就 blocked"、<a href="../01-foundations/1-4-core-boundaries.html">1.4</a> 的"不污染 core"。</p>
+
+        <div class="callout claim">
+          <div class="c-h">这一节的边界声明</div>
+          <p>"证据高于能力面"<b>能</b>保证的是：EOS 给出的每个结论都可被追溯到一条带元数据的 trace，从而可审计、可复现、有明确边界。它<b>不</b>保证：任何一条 trace 本身代表了真实世界的能力、仿真保真度、或后端等价——trace 只是<i>证据的容器</i>，证据强不强、能支撑多宽的结论，仍要逐条审视。换句话说，trace 让"弱证据"无处藏身，但它本身并不把弱证据变强；它只是让你诚实。一个有 trace 的弱结论，仍然是弱结论——只不过现在你<i>知道</i>它弱。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>记住三句话就够了：（1）"成功调用一个后端 SDK 不等于评测结论成立"——代码不崩只是起点，不是证据；（2）"The trace design is the product boundary"——EOS 这个产品的边界，由它的 trace 能记录与审计到什么程度划定，而不是由引擎数量划定；（3）评测科学（Model Cards、Datasheets、reproducibility checklist、Henderson 2018 的方差教训）早就告诉我们：<b>没有 seed 与 trace 的标量是弱证据</b>。</p>
+        <p>下一节，我们把这条原则收紧成 EOS 最具签名性的一条纪律——<b>claim boundary</b>：如何用一行"X 不是 Y"的声明，挡住所有过度宣称。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

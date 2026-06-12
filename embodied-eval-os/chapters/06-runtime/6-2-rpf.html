@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Runtime Provider Facade：八个动词 · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="6-2">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 6 · Runtime · 6-2</div>
+        <h1>Runtime Provider Facade：八个动词</h1>
+        <p class="lede">路径 B 的心脏，是一个叫 <span class="term">Runtime Provider Facade</span>（RPF）的东西。它的工程外形——一个暴露若干动词、按需懒加载某个后端的 facade——是从 MetaSim 借来的。但 EOS 借的只是<i>形状</i>，它明确<b>拒绝</b>了 MetaSim 那套外形所隐含的两条假设。这一节我们就来拆这八个动词，看它们如何既像一个仿真器接口、又坚决不把"调通一个 SDK"当成"评测结论"。</p>
+
+        <h2 id="borrow-shape">借外形，拒含义</h2>
+        <p>MetaSim / RoboVerse 的工程做法很优雅：用一套统一配置，配上每个仿真器一个 <span class="term">Handler</span>（<code>MujocoHandler</code>、<code>IsaacLabHandler</code>、<code>PybulletHandler</code>…），对外暴露一组生命周期方法。EOS 看中的是这个<b>"暴露动词的 facade + 懒分派"</b>的工程形状——它干净、可测、好扩展。但 EOS 在 <span class="term">metasim-runtime-boundary-review</span> 里明确写下：不依赖 MetaSim、不抄它的 API，只借外形。</p>
+        <p>因为那个外形悄悄夹带了两条 EOS 不能接受的含义：</p>
+        <ul>
+          <li><b>"一个 handler = 一个 backend"</b>。EOS 的铁律三说后端必须拆成 platform / physics / renderer / sensors / control / process runtime 六个组件。一个 <code>MujocoHandler</code> 把这六件事打包成"MuJoCo"——这正是 EOS 要避免的单字符串身份。</li>
+          <li><b>"handler state 物理可比"</b>。从两个 handler 各自 <code>get_state()</code> 拿到同形状的 tensor，不等于它们的 joint/body/contact ordering、单位、符号、力家族可比（这是 <a href="../03-trace-state/3-4-tensorstate.html">3.4</a> 的全部主题）。</li>
+        </ul>
+
+        <div class="bridge sm">
+          <div class="c-h"><span class="tag">从物理后端 看</span> MetaSim 的生命周期没有"恰好八个动词"</div>
+          <p>说清楚一件事，免得你读了 MetaSim 论文回来对不上号：MetaSim 的 <span class="term">BaseSimHandler</span> 暴露的是 <code>launch / get_state / set_state / simulate / close</code> 这一组生命周期方法（外加 <code>get_joint_names / get_body_names</code> 之类），论文里<b>并没有</b>"恰好八个动词"的清单。EOS 的八个动词是 <i>EOS 自己的</i>设计，是把"懒分派 facade"这个外形重新切分、再补上 EOS 特有的证据语义（<code>measure</code> 与 <code>query</code> 的分离、<code>apply_control</code> 要回 ack）后的产物。不要把 EOS 的八动词说成 MetaSim 的接口。</p>
+        </div>
+
+        <h2 id="eight-verbs">八个动词</h2>
+        <p>facade 的契约就摆在 <span class="term">runtime/provider_facade.py</span> 里，八个方法签名清清楚楚：</p>
+
+        <div class="code" data-lang="python"><div class="code-h"><span class="fn">src/embodied_eval_os/runtime/provider_facade.py</span><button class="cp">复制</button></div><pre><code>class RuntimeProvider(Protocol):
+    def materialize(self, ...): ...     # 把 scenario 声明的世界拉成一个 WorldSession
+    def reset(self, ...): ...           # 回到初始 episode 状态
+    def apply_state(self, ...): ...     # 写入一个外部状态（受 capability 限制）
+    def apply_control(self, ...): ...   # 把控制请求交给后端，回一个 ack
+    def step(self, ...): ...            # 推进一拍物理
+    def measure(self, ...): ...         # 抓一张 artifact-backed L3 测量快照
+    def query(self, ...): ...           # 取诊断/telemetry/native dump 等旁路证据
+    def close(self, ...): ...           # 收尾，释放 session</code></pre></div>
+
+        <p>前七个动词驱动一次 run 的主干，<code>query</code> 与 <code>close</code> 是辅助。它们各自的职责边界很重要：<code>measure</code> 产出的是<b>证据边界</b>——一张 artifact-backed 的 <span class="term">L3 RuntimeMeasurementSnapshot</span>（不可变、hash 寻址、capability-scoped）；而 <code>query</code> 取的是<i>旁路</i>诊断（process-runtime telemetry、solver diagnostics、native state dump），它们可能有用但不构成主证据线。把"测量"和"查询诊断"分成两个动词，本身就是在防止"拿后端的 native dump 当跨后端证据"这种偷换。</p>
+
+        <p>facade 还在类型层面守纪律：每个动词返回一个 <code>RuntimeProviderOperationResult</code>，当 <code>status</code> 落在 <code>{blocked, failed, unsupported}</code> 时，<code>blocking_reasons</code> <b>必须</b>非空——代码里直接断言"不许有沉默的 blocked"。这就是 no-silent-fallback 政策在 facade 这一层的兑现：一个动词失败了，你拿到的不是 0，是一条写明缘由的 blocking reason。</p>
+
+        <div class="lab">
+          <div class="lab-h"><span class="lab-tag">interactive</span><span class="lab-t">八动词 facade：驱动一个 episode，看模型被脱敏的那一刻</span></div>
+          <div class="lab-body" data-widget="rpf-verbs"></div>
+          <div class="lab-cap">按时序点过八个动词，看一次 run 怎样被驱动；特别留意 <code>measure</code> 之后、动作进模型之前，privileged / native-dump / solver-diagnostics 是怎样被挡在 model-visible observation 之外的。</div>
+        </div>
+
+        <h2 id="not-a-backend-id">单个 simulator 字符串不是 backend identity</h2>
+        <p>这是 RPF 最该刻进脑子的一条：在 EOS 里，<b>"simulator: mujoco"这样一个字符串，不是一个 backend 身份</b>。一个 provider 即便底层确实是 MuJoCo，它的身份也必须由六组件 + capability 声明来描述——physics 是 MuJoCo 不代表 renderer 也是它，更不代表它在某条轴上就是 <code>exact</code>。facade 的证据边界是 provider 产出的 artifact-backed L3 结果，<i>不是</i>它喊自己叫什么。这也是为什么 RPF 从不以"支持了几个 handler"来自我衡量——support-matrix 的宽度不是 EOS 的产品边界。</p>
+
+        <h2 id="closure-history">RPF 是怎样一关一关打下来的</h2>
+        <p>RPF 不是一次写成的，它的闭环史（记在 <code>docs/records/</code> 与 index.md 里）本身就是一段"先立边界、再上真后端"的纪律示范，从 RPF-1 一路到 RPF-10：</p>
+        <ul>
+          <li><b>RPF-1→6</b>：纯架构地基——boundary &amp; claim freeze、provider facade 契约规格、runtime protocol 骨架、query-evidence 集成、external-solver adapter pilot、pickup-bridge。这六关里<i>没有一个真仿真器</i>，全在把契约钉死。</li>
+          <li><b>RPF-7A</b>：第一个 fresh 的 <span class="term">MuJoCo 3.3.0</span> live provider，状态 <code>executed_pass</code>，跑出了真实的 <code>motion_delta</code>。这是 facade 第一次真的拉起一个物理后端。</li>
+          <li><b>RPF-7B</b>：fixture-driven 的通用 <span class="term">provider conformance kit</span>——用固定 fixture 判一个 provider 合不合契约，而<b>不</b>按它支持多少 handler 来打分（这条 6.4 会细讲）。</li>
+          <li><b>RPF-8</b>：scenario / materialization 驱动——让 <i>scenario</i> 声明世界长什么样，而不是 provider 自己手写 MJCF。世界的所有权回到了 scenario pack。</li>
+          <li><b>RPF-9</b>：第二、第三个 live provider 上线——<span class="term">PyBullet</span> 与 <span class="term">Genesis 0.4.4</span>，证明 facade "不止 MuJoCo"。</li>
+          <li><b>RPF-10</b>：PyBullet 上挂一个 <span class="term">scripted_demonstrator</span> 的 live model loop（<code>privileged_state_visible_to_model: false</code>、<code>standard_model_score: null</code>）——也就是 6.3 要拆的那条链。</li>
+        </ul>
+        <p>注意这条曲线的形状：<b>先关六关纯契约，第七关才碰真后端</b>。这正是 EOS 与"先接十个仿真器再说"的工程文化的分野——它要先确定"什么算证据"，再去产证据。RPF-11（parallel / hybrid 执行）是可选项，不是默认的下一步。</p>
+
+        <div class="callout claim">
+          <div class="c-h">一个 live SDK lane 证明了什么 / 还不能证明什么</div>
+          <p>RPF-7A 把 MuJoCo 真的拉起来并跑出 <code>motion_delta</code>，这<b>证明</b>的是：EOS 的 facade 能在一个真实物理 SDK 上执行一条 live lane，并把产物做成 artifact-backed 的 L3 证据。它<i>不</i>证明三件互不相同的事——<b>a live SDK lane ≠ a benchmark score ≠ backend parity</b>。"我成功调用了 MuJoCo 的 step"不等于"模型在这个任务上的得分成立"，更不等于"MuJoCo 与 PyBullet 在这条轨迹上物理等价"。RPF 的全部纪律，就是把这三件事在报告里<i>分开声明</i>，永远不让"调通 SDK"悄悄升级成"评测结论"或"后端等价"。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>RPF 借了 MetaSim 的工程外形（暴露动词的懒分派 facade），但拒绝了它的两条含义——"一个 handler = 一个 backend"和"handler state 物理可比"。它的八个动词是 <span class="term">materialize / reset / apply_state / apply_control / step / measure / query / close</span>（这八个是 EOS 自己的，<i>不是</i> MetaSim 的）；<code>measure</code> 产出 artifact-backed 的 L3 证据边界，单个 simulator 字符串不构成 backend 身份。它的闭环史 RPF-1→10 先关六关纯契约、第七关才上真 MuJoCo，再到 PyBullet/Genesis 多后端与 RPF-10 的 live model loop。</p>
+        <p>下一节，我们顺着 RPF-10 走完整条 live model loop：观测怎样被脱敏、动作怎样变成控制、缺测量怎样变成 blocked 而非 0。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

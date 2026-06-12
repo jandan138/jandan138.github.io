@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>三层状态：measure → project → semantics · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="3-2">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 3 · Trace &amp; State · 3-2</div>
+        <h1>三层状态：measure → project → semantics</h1>
+        <p class="lede">上一节我们说 L0–L6 脊柱的中段——L3、L4、L5——是「状态」被拆成的三层。这一节把这三层钉死在代码上：它们各自是哪个 dataclass、装哪些字段、由谁产生、给谁看。你会看到一个原始的 <code>qpos</code> 向量如何走完「<span class="term-i">measure → project → semantics</span>」这条流水线，最后变成场景才认得的 <code>finger_cap_contact</code>。核心问题只有一个：为什么必须是三层，而不能省成一层。</p>
+
+        <h2 id="three-types">三种状态，三个 dataclass</h2>
+        <p>EOS 的状态不是一个对象，而是三个：每一个对应脊柱上的一层，住在 <span class="term">core/state/world_state.py</span>（语义/投影）和 runtime（原始测量）里。先把三者的身份摆清楚：</p>
+        <ul>
+          <li><b>L3 · <span class="term">RuntimeMeasurementSnapshot</span></b>——raw / measured。后端<i>测出来或导出来</i>的东西，artifact-backed、immutable、capability-scoped。它<b>不保证</b>完整、不保证可恢复、不保证可独立比较。它是证据的<i>原料</i>，还带着后端方言（native alias）。</li>
+          <li><b>L4 · <span class="term">PhysicalStateProjection</span></b>——projected / simulator-neutral。把 L3 归一化成「不带后端口音」的物理投影，让跨后端比较有共同语言。</li>
+          <li><b>L5 · <span class="term">TaskSemanticState</span></b>——semantics。场景<i>拥有</i>的语义/过程状态，core 不认得里面的字段名，只存 schema-validated 的 payload。</li>
+        </ul>
+        <p>下面这个部件把这条流水线演出来：一个原始 <code>qpos</code> 向量从 L3 进来，经 L4 投影成 simulator-neutral 字段，再被场景原语解读成 <code>finger_cap_contact</code> 这样的语义事实。</p>
+
+        <div class="lab">
+          <div class="lab-h"><span class="lab-tag">interactive</span><span class="lab-t">measure → project → semantics 三层</span></div>
+          <div class="lab-body" data-widget="state-normalization"></div>
+          <div class="lab-cap">看一个 <code>qpos</code> 向量怎样逐层升格：raw 测量 → 物理投影 → 场景语义。注意 <code>finger_cap_contact</code> 只在 L5 才出现，core 永远不认得这个名字。</div>
+        </div>
+
+        <h2 id="l4-fields">L4 PhysicalStateProjection：simulator-neutral 的字段表</h2>
+        <p>L4 是三层里最值得逐字看的，因为它定义了「跨后端可比」到底长什么样。看 <span class="term">core/state/world_state.py</span> 里真实的 dataclass：</p>
+        <div class="code" data-lang="python"><div class="code-h"><span class="fn">src/embodied_eval_os/core/state/world_state.py</span><button class="cp">复制</button></div><pre><code>@dataclass
+class PhysicalStateProjection:
+    """Backend-normalized physical evidence derived from L3 measurement.
+
+    Examples: object poses, robot joints, velocities, contacts, sensor states.
+    """
+
+    time_s: float
+    objects: dict[str, Any] = field(default_factory=dict)
+    robots: dict[str, Any] = field(default_factory=dict)
+    joints: dict[str, Any] = field(default_factory=dict)
+    contacts: list[dict[str, Any]] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)</code></pre></div>
+        <p>它的字段都是<i>结构化的、场景中立的</i>物理量：<code>time_s</code> 是这一帧的时间；<code>robots</code> 里典型装 <code>qpos / qvel / ee_pose</code>；<code>objects</code> 里每个物体装 <code>pose / velocity</code>；<code>joints</code> 里每个关节装 <code>q / qd</code>；<code>contacts</code> 是一串 <code>{body_a, body_b, normal_force}</code>。</p>
+        <div class="callout note">
+          <div class="c-h">注意 <code>qpos</code> 在这里是「字段值」，不是 core API 名</div>
+          <p>你也许记得 <code>qpos / qvel</code> 是 <a href="../01-foundations/1-4-core-boundaries.html">core 禁词表</a>里的名字——leakage checker 会因为 core 代码里出现这两个 token 而报红。这里没有矛盾：禁的是把 <code>qpos</code> 当成 core 的<i>命名/API</i>（比如一个 <code>CanonicalRobotState.qpos</code> 属性）。而在 L4 投影里，<code>robots</code> 是一个 <code>dict[str, Any]</code>，<code>qpos</code> 只是某个后端投影时往字典里塞的一个<i>键</i>——它是数据，不是 core 的符号。core 代码本身从不写出这个名字。</p>
+        </div>
+
+        <h2 id="l5-fields">L5 TaskSemanticState：场景拥有的语义</h2>
+        <p>L5 是场景的地盘。它的 dataclass 同样在 <span class="term">world_state.py</span> 里：</p>
+        <div class="code" data-lang="python"><div class="code-h"><span class="fn">src/embodied_eval_os/core/state/world_state.py</span><button class="cp">复制</button></div><pre><code>@dataclass
+class TaskSemanticState:
+    """Evaluator-visible scenario/process semantics.
+
+    Scenario-specific process/domain state.
+    Core does not assume any one scenario, setting, simulator, or benchmark.
+    """
+
+    process_state: dict[str, Any] = field(default_factory=dict)
+    hazard_events: list[dict[str, Any]] = field(default_factory=list)
+    procedure_state: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)</code></pre></div>
+        <p>三个语义槽：<code>process_state</code>（过程到了哪一步）、<code>hazard_events</code>（发生了哪些危险事件）、<code>procedure_state</code>（流程/SOP 状态）。关键在那句 docstring：<i>「Core does not assume any one scenario, setting, simulator, or benchmark.」</i> core 给的是三个空字典/列表的<b>形状</b>，里面装什么由 scenario pack 决定。<code>finger_cap_contact</code>、<code>spillage</code>、<code>protocol_step</code> 这些字段名，core 一个都不认得——它只负责存 schema 校验过的 payload。</p>
+        <p>还有一条硬约束写进了代码：<b>L5 不许内嵌 L4</b>。<span class="term">trace.py</span> 在反序列化时会显式拒绝把 <code>physical_state_projection</code> 塞进 <code>TaskSemanticState</code>：</p>
+        <div class="code" data-lang="python"><div class="code-h"><span class="fn">src/embodied_eval_os/core/state/trace.py</span><button class="cp">复制</button></div><pre><code>INVALID_TASK_SEMANTIC_KEYS = {
+    "physical_state_projection",
+}
+# ...
+invalid_keys = INVALID_TASK_SEMANTIC_KEYS.intersection(payload)
+if invalid_keys:
+    raise ValueError(
+        "TaskSemanticState cannot embed physical_state_projection; "
+        "put L4 physical evidence on TraceStep.physical_state_projection"
+    )</code></pre></div>
+        <p>这条 guard 不是洁癖，而是分层的执法：L4 的物理证据必须挂在 <span class="term">TraceStep.physical_state_projection</span> 上，而不能藏进 L5 的语义里。否则「物理真相」和「场景解读」就又搅成一坨了——正是上一节我们费力分开的那种坨。</p>
+
+        <h2 id="why-three">为什么是三层，不是一层</h2>
+        <p>把这三层压成一个「world state」对象，省下来的代码量，会以三种代价偿还回来：</p>
+        <ol>
+          <li><b>跨后端可比性会丢。</b>L3 带着后端方言（MuJoCo 的 native dump 和 PhysX 的不是一回事）。如果不先经 L4 归一化就拿去比较，你比的是方言而不是物理。L4 这一层存在的唯一理由，就是给跨后端比较一个 simulator-neutral 的共同语。</li>
+          <li><b>证据边界会塌。</b>L3 明确<i>不保证</i>完整或可恢复——它只是「这个后端这次能测到/导出的东西」。把它和「保证可比的投影」混为一谈，等于偷偷把一个弱证据当强证据用。三层让「测到了什么」和「归一化出了什么」各自诚实。</li>
+          <li><b>core 会被场景污染。</b>L5 的字段名属于场景。如果语义直接长在物理状态对象上，core 就不得不认得 <code>finger_cap_contact</code> 之类的名字——铁律一当场失守。三层把场景语义关在 L5 的 <code>dict</code> 里，core 只见 schema，不见场景。</li>
+        </ol>
+
+        <div class="bridge ev">
+          <div class="c-h"><span class="tag">从评测科学 看</span> 三层就是 measurement → operationalization → construct</div>
+          <p>测量科学里，从「仪器读数」到「你声称测到的构念」之间从来不是一步。L3 是 raw measurement（仪器读到的数）；L4 是把它归一化成可比的 operationalization（你定义的、跨设置一致的量）；L5 才是 construct（你真正想谈的语义事实，比如「夹爪接触到了瓶盖」）。把三者压成一层，正是 Jacobs &amp; Wallach（FAccT 2021）说的 operationalization gap 的温床——你以为在谈构念，其实手里只有方言读数。EOS 把这段距离<i>显式切成三层</i>，每一跳都留下可审计的痕迹。</p>
+        </div>
+
+        <h2 id="state-v2">State V2：改名不是洁癖，是迁移硬重构</h2>
+        <p>这三层名字是 <span class="term">State V2</span> 重构后的结果。早期 V1 用的是另一套名字，V2 做了一次硬改名，并把 V1 的读取路径全部赶进 <span class="term">tools/migrations/state_v1/</span>。对照表值得记住：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">State V1 → V2 改名表</span><button class="cp">复制</button></div><pre><code>CanonicalPhysicalState        → PhysicalStateProjection
+TaskWorldState                → TaskSemanticState
+canonical_physical_state      → physical_state_projection
+task_world_state              → task_semantic_state
+world_state / metrics alias   → 从主 API 删除
+get_canonical_state()         → measure() + project_physical_state(...)</code></pre></div>
+        <p>最后一行最能说明 V2 的精神：旧的 <code>get_canonical_state()</code> 一步到位地「拿当前状态」，悄悄把 measure 和 project 两件事糊在一起。V2 把它拆成 <span class="term">measure()</span>（拿 L3 原始测量）+ <span class="term">project_physical_state(...)</span>（归一化成 L4）两个显式步骤——流水线的每一跳都被命名、被看见。</p>
+        <p>而且这套改名是<b>带牙齿</b>的：上一节提过、下一节会细看的 <span class="term">TraceStep.from_dict</span>，会主动检测 <code>canonical_physical_state</code>、<code>task_world_state</code> 这些 legacy key 并直接报错，把你指向迁移模块。换句话说，你<i>不可能</i>把一条 V1 的 trace 当 V2 喂进来还蒙混过关。</p>
+
+        <div class="callout claim">
+          <div class="c-h">三层状态证明了什么 · 不证明什么</div>
+          <p>三层状态<b>证明</b>的是：每一帧的物理证据，从原始测量到场景语义，走过了一条<i>显式的、各层归属清楚的</i>归一化路径——所以你能诚实地说「这个语义事实是从哪个后端的哪个测量、经哪一步投影得来的」。它<b>不</b>证明 L4 的投影在物理上「忠实」于真实世界，也不证明两个后端的 L4 数值可以直接相等比较——那需要 <a href="3-3-episode-trace.html">L6 的 provenance</a> 和成对诊断来支撑。投影让差异<i>可定位</i>，不让差异<i>消失</i>。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>三件事：（1）EOS 的状态是<b>三个 dataclass</b>——L3 <span class="term">RuntimeMeasurementSnapshot</span>（raw）、L4 <span class="term">PhysicalStateProjection</span>（simulator-neutral，字段 <code>time_s/robots/objects/joints/contacts</code>）、L5 <span class="term">TaskSemanticState</span>（场景语义 <code>process_state/hazard_events/procedure_state</code>）；（2）必须三层，因为压成一层会同时丢掉跨后端可比性、塌掉证据边界、污染 core；（3）这套名字是 <span class="term">State V2</span> 改名的产物，迁移带牙齿——legacy key 会被 <code>from_dict</code> 当场拒绝。</p>
+        <p>下一节，我们登上脊柱顶端：<span class="term">L6 EpisodeTrace</span>。把这三层状态、加上 provenance、claim boundary、六大组件，全部装进一条可审计的证据账本，看看「一条 trace 凭什么算证据」。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

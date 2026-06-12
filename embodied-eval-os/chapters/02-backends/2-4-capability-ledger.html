@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>能力矩阵是账本，不是分数 · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="2-4">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 2 · Backend Composability · 2-4</div>
+        <h1>能力矩阵是账本，不是分数</h1>
+        <p class="lede">上一节末尾我们埋了一个区分：profile 声明"我有能力做什么"，并不等于"这次 run 真的做到了什么"。这一节把这条缝<b>撑开</b>——它是 Part 2 的收束，也是整本书"差异是证据、不是能力面"主张在后端层的落点。一份能力矩阵看起来像一张漂亮的表，但它是一本<span class="term-i">账本</span>，记录"这一次到底测到/产出/被 block/失败了什么"；它<b>不是</b>一个可以拿去排名的分数。</p>
+
+        <h2 id="two-layers">两层：registry vs readiness ledger</h2>
+        <p>EOS 刻意把后端能力分成两层，永远不让它们塌缩成一个：</p>
+        <ul>
+          <li><b>runtime capability registry（能力注册表）</b>——<i>静态声明</i>。这就是 <a href="2-2-backend-profile.html">2.2</a> 的 <span class="term">BackendProfile</span>：它写明这个后端<i>打算/有能力</i>支持哪些组件、每格的 <span class="term">CapabilityTier</span> 是什么。它是一份<b>菜单</b>，在 run 开始之前就存在。</li>
+          <li><b>backend readiness ledger（就绪账本）</b>——<i>这一次实测</i>。它记录在<b>这一条具体的 run</b> 里，每根轴到底发生了什么：测到了？近似测到了？只读？被 block 了？失败了？它是<b>这一餐实际端上桌的东西</b>，在 run 之后才填得出来。</li>
+        </ul>
+        <p>菜单上写着"供应龙虾"，不代表今晚你桌上有龙虾——也许厨房缺货（<code>blocked_provider_unavailable</code>），也许这道菜这次没点（<code>not_evaluated</code>）。registry 是前者，ledger 是后者。把两者混为一谈，正是过度宣称的温床。</p>
+
+        <div class="bridge ev">
+          <div class="c-h"><span class="tag">从评测科学 看</span> 声明的能力 ≠ 兑现的证据</div>
+          <p>这正是 reproducibility 文献反复敲打的点。Henderson 等人（"Deep RL that Matters", AAAI 2018）证明：同一份"能跑"的声明，换个 seed、换个实现细节，结果可以天差地别——所以一份能力声明<i>本身</i>不是证据，每一次 run 的实测才是。EOS 的 readiness ledger 就是把"这一次到底兑现了多少"逐轴记下来，而不是停留在 registry 的"我支持"。这和 datasheet / model card 把"声明"与"实测局限"分栏列写是同一种纪律。</p>
+        </div>
+
+        <h2 id="axis-status">轴级状态：一格不止"行/不行"</h2>
+        <p>账本里每一根轴的状态，不是布尔，而是落在一组细粒度的词上（backend-composability.md 给出的 axis-level status）：</p>
+        <table>
+          <thead><tr><th>status</th><th>含义</th></tr></thead>
+          <tbody>
+            <tr><td><span class="verdict matched">exact</span></td><td>这根轴被精确测到/产出。</td></tr>
+            <tr><td><span class="verdict neutral">approximate</span></td><td>测到了，但是近似值。</td></tr>
+            <tr><td><span class="verdict neutral">partial</span></td><td>只产出了一部分（如端点采样，缺逐步数据）。</td></tr>
+            <tr><td><span class="verdict neutral">read_only</span></td><td>可读不可写。</td></tr>
+            <tr><td><span class="verdict neutral">opaque_only</span></td><td>只有不透明 dump，没有解析后的结构化证据。</td></tr>
+            <tr><td><span class="verdict mismatched">unsupported</span></td><td>这根轴根本不提供。</td></tr>
+            <tr><td><span class="verdict blocked">blocked</span></td><td>本应有、这次却没被产出/无法兑现——显式记 block + reason，<b>不填 0</b>。</td></tr>
+          </tbody>
+        </table>
+        <p>你已经在 <a href="2-2-backend-profile.html">2.2</a> 的 <code>mujoco_autobio.yaml</code> 里见过活的账本：它的 <code>interaction_dynamics</code> 表里 <code>native_contact_pairs</code> 是 <code>partial</code>（"端点样本含原生 geom pair 与距离证据，但完整逐步/子步接触 pair 包未 materialize"），而 <code>contact_force_vectors</code> / <code>solver_constraints</code> 等是 <code>blocked</code>（各附 reason）。注意这里的纪律：缺接触力向量是一个 <span class="term-i">coverage limit / blocker</span>，<b>不是</b> false negative，<b>绝不</b>写成 <code>0.0</code>。这正是 No Silent Fallback 政策（<a href="../01-foundations/1-3-no-silent-fallback.html">1.3</a>）在后端账本上的体现：缺证据要变成显式状态，而不是一个看起来无害的零。</p>
+
+        <h2 id="not-imply">一张支持矩阵不蕴含什么</h2>
+        <p>这是本节的核心，也是 EOS 反复强调的一句话。哪怕一份支持矩阵满屏 <code>native</code> / <code>exact</code>，它<b>都不蕴含</b>下面这些（backend-composability.md 原文）：</p>
+        <blockquote>
+          <p>"A simulator support matrix … does not imply task success, backend equivalence, trajectory parity, contact-force parity, render parity, sensor calibration, official benchmark reproduction, or real-world safety."</p>
+        </blockquote>
+        <p>逐条拆开它否定了什么：</p>
+        <ul>
+          <li><b>≠ task success</b>：后端支持某能力，不代表模型在这个后端上把任务做成了。</li>
+          <li><b>≠ backend equivalence / trajectory parity / contact-force parity</b>：两个后端各自都 <code>native</code>，不代表它们轨迹一致、接触力一致——上一节已说明接触是 NCP，各引擎松弛方式不同，本就会分叉。</li>
+          <li><b>≠ render parity / sensor calibration</b>：两边都能出 RGB，不代表像素可比、传感器标定一致。</li>
+          <li><b>≠ official benchmark reproduction</b>：能跑通一个兼容 smoke，不等于复现了官方 benchmark（这正是 <code>mujoco_autobio.yaml</code> 把 <code>faithful_claim_requires</code> 列成 official_assets / official_plugins / external_commit / claim_boundary_review 的原因）。</li>
+          <li><b>≠ real-world safety</b>：仿真里的危险轴是 simulator-only hazard，永远不等于真实世界安全认证。</li>
+        </ul>
+        <p>换句话说：能力账本回答的是"<i>这次我们到底有哪些证据、各处于什么状态</i>"，它<b>不</b>回答"谁更强""谁等价""谁复现了谁"。把账本读成排行榜，是对它最根本的误用。</p>
+
+        <h2 id="ledger-widget">动手：读一张账本，分清 registry 与 readiness</h2>
+        <p>下面这个部件把两层叠在一起：左边是 registry（声明的 tier），右边是这一次 run 的 readiness（逐轴 status）。拨动它，体会"声明 native"与"这次 exact / partial / blocked"是两件不同的事。</p>
+
+        <div class="lab">
+          <div class="lab-h"><span class="lab-tag">interactive</span><span class="lab-t">capability ledger：registry（声明）对照 readiness（这次实测）的逐轴 status</span></div>
+          <div class="lab-body" data-widget="capability-ledger"></div>
+          <div class="lab-cap">逐轴查看 exact / approximate / partial / read_only / opaque_only / unsupported / blocked。重点感受：一根 registry 标 native 的轴，readiness 里完全可能是 blocked——缺证据被记成显式 block，而不是被偷偷填成 0 或 success。</div>
+        </div>
+
+        <div class="callout claim">
+          <div class="c-h">能力矩阵能证明什么、不能证明什么</div>
+          <p>一份 EOS 能力矩阵<b>能</b>证明的：在这一次 run 里，每根能力轴各自处于什么状态（exact / approximate / partial / read_only / opaque_only / unsupported / blocked），以及每个 <code>blocked</code> 背后的显式 reason。它<b>不能</b>证明：任务成功、后端等价、轨迹 parity、接触力 parity、渲染 parity、传感器标定一致、官方 benchmark 复现、或真实世界安全。账本是<i>证据的逐轴记账</i>，不是分数、不是排行、不是 parity 声明。任何把这张表压成一个数字拿去比大小的做法，都越过了它的 claim boundary。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>三点：（1）能力分两层——<b>registry</b>（profile 静态声明的 tier，菜单）与 <b>readiness ledger</b>（这一次 run 逐轴实测的 status，端上桌的东西），绝不塌缩成一个；（2）轴级状态是细粒度的 <code>exact / approximate / partial / read_only / opaque_only / unsupported / blocked</code>，缺证据记 <code>blocked</code>+reason 而非填 0；（3）一张支持矩阵<i>不蕴含</i> task success / backend equivalence / trajectory·contact·render parity / sensor calibration / official reproduction / real-world safety——它是账本，不是分数。</p>
+        <p>Part 2 到此收束：你已经能把任何"后端"拆成六组件、写成一份带 tier 的 profile、并把它的能力读成一本逐轴记账的账本。下一部分（Part 3）我们转向 EOS 的另一根脊梁——L0–L6 分层与三层状态，看证据是怎么从原始测量一路归一化、最终沉淀成 <span class="term">EpisodeTrace</span> 的。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Backend profile 与 capability tier · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="2-2">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 2 · Backend Composability · 2-2</div>
+        <h1>Backend profile 与 capability tier</h1>
+        <p class="lede">上一节我们在概念上把后端拆成了六个组件。这一节把概念落进代码：EOS 用两个 <span class="term">frozen dataclass</span>——<span class="term">BackendProfile</span> 和 <span class="term">ComponentProfile</span>——把"组合"变成一份可校验、可哈希、可原样写进每条 trace 的声明；用一个 <span class="term">CapabilityTier</span> 枚举给每个组件的能力<i>诚实地</i>定级。我们会逐行读真实代码，再把最小的 <code>dummy_backend.yaml</code> 整份拆开看，最后对照更"富"的 <code>mujoco_autobio.yaml</code>。</p>
+
+        <h2 id="two-dataclasses">两个 dataclass：组件束的代码形态</h2>
+        <p>六个组件落地后，长这样（真实文件，逐字未删）：</p>
+        <div class="code" data-lang="python"><div class="code-h"><span class="fn">src/embodied_eval_os/core/specs/backend_profile.py</span><button class="cp">复制</button></div><pre><code>class CapabilityTier(str, Enum):
+    """Capability fidelity declaration for a backend component."""
+
+    NATIVE = "native"
+    REDUCED = "reduced"
+    SEMANTIC_PROXY = "semantic_proxy"
+    EMULATED = "emulated"
+    UNSUPPORTED = "unsupported"
+
+
+@dataclass(frozen=True)
+class ComponentProfile:
+    """A composable backend component: physics, renderer, sensor, control, etc."""
+
+    name: str
+    component_type: str
+    version: str | None = None
+    capabilities: dict[str, CapabilityTier | str] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class BackendProfile:
+    profile_id: str
+    platform: ComponentProfile
+    physics: ComponentProfile | None = None
+    renderer: ComponentProfile | None = None
+    sensors: list[ComponentProfile] = field(default_factory=list)
+    control: ComponentProfile | None = None
+    process_runtime: ComponentProfile | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def component_summary(self) -&gt; dict[str, str | None]:
+        return {
+            "platform": self.platform.name,
+            "physics": self.physics.name if self.physics else None,
+            "renderer": self.renderer.name if self.renderer else None,
+            "control": self.control.name if self.control else None,
+            "process_runtime": self.process_runtime.name if self.process_runtime else None,
+        }</code></pre></div>
+        <p>几个设计选择值得停下来看：</p>
+        <ul>
+          <li><b>每个组件都是一个 <span class="term">ComponentProfile</span></b>，而不是一个裸字符串。它带 <code>name</code>、<code>component_type</code>、可选 <code>version</code>、一个 <code>capabilities</code> 字典和自由 <code>metadata</code>。"PhysX 4.1"和"PhysX 5.0"是两个不同的 ComponentProfile——版本是一等公民。</li>
+          <li><b><code>frozen=True</code></b>：profile 一旦构造就不可变，因此可哈希、可安全地当作证据指纹写进 trace。一条 <span class="term">EpisodeTrace</span> 记的是 <code>backend_profile_id</code> 加 <code>backend_components</code> 字典——后端身份是被<i>固定下来的</i>，不会在 run 中途漂移。</li>
+          <li><b><code>platform</code> 是唯一必填项</b>，其余五个组件都可为 <code>None</code>。这本身是一种诚实：一个只做核心 smoke 的后端可以没有真渲染器、没有 process runtime，而 <code>None</code> 明确说"这里什么都没有"，而不是假装有。</li>
+          <li><b><code>component_summary()</code></b> 把六组件压成一个扁平字典，专门给 trace 元数据和报告用——注意它<i>没有</i>把 sensors 列表展开，因为传感器是个列表，单独处理。</li>
+        </ul>
+
+        <h2 id="capability-tier">CapabilityTier：诚实地说"我能做到几分"</h2>
+        <p><span class="term">CapabilityTier</span> 是这套设计里最体现 EOS 哲学的部分。一个组件不是"支持/不支持"的布尔，而是落在五个保真度层级上：</p>
+        <table>
+          <thead><tr><th>tier</th><th>含义</th></tr></thead>
+          <tbody>
+            <tr><td><span class="term">NATIVE</span></td><td>引擎原生、全保真地提供这个能力（如 MuJoCo 原生刚体动力学）。</td></tr>
+            <tr><td><span class="term">REDUCED</span></td><td>提供，但是降级/简化版本。</td></tr>
+            <tr><td><span class="term">SEMANTIC_PROXY</span></td><td>只是<i>语义代理</i>——用一个简化模型近似该现象，<b>不是</b>真实物理。reduced liquid model 属于这一层。</td></tr>
+            <tr><td><span class="term">EMULATED</span></td><td>由非原生路径模拟出来。</td></tr>
+            <tr><td><span class="term">UNSUPPORTED</span></td><td>这个组件根本不提供该能力。</td></tr>
+          </tbody>
+        </table>
+        <p>注意 <code>capabilities</code> 字典的值类型是 <code>CapabilityTier | str</code>——既能用枚举，也能用更细的轴级状态字符串（如 <code>partial</code> / <code>blocked</code>，下一节和 <a href="2-4-capability-ledger.html">2.4</a> 会展开）。关键在于：tier 是一份<b>声明</b>。声明 <code>SEMANTIC_PROXY</code> 等于提前把 claim boundary 钉死——任何基于这个组件的结论，都不许悄悄升格成"真实物理"的结论。</p>
+
+        <div class="bridge ev">
+          <div class="c-h"><span class="tag">从评测科学 看</span> tier 就是写在合同里的 construct boundary</div>
+          <p>测量科学里讲 <span class="term">construct validity</span>：你的指标必须真测到你声称的构念。CapabilityTier 把这条纪律<i>前置</i>到后端声明阶段——还没开始评测，profile 就已经写明"我的 physics 是 semantic_proxy"，于是任何下游报告都不能把这个代理的输出当成真实流体力学证据。这和 Model Cards（Mitchell et al., FAT* 2019）的精神一致：把局限<b>写进规格</b>，而不是埋在脚注里事后辩解。</p>
+        </div>
+
+        <h2 id="dummy">最小 profile：dummy_backend.yaml 全文</h2>
+        <p>profile 在仓库里以 YAML 落盘，顶层 key 一一对应 dataclass 字段：<code>profile_id / platform / physics / renderer / sensors（列表）/ control / process_runtime / metadata</code>。最小的代表性 profile 是核心 smoke 专用的这一份——它故意"什么都不做真的"，正好用来逐 key 解释：</p>
+        <div class="code" data-lang="yaml"><div class="code-h"><span class="fn">configs/backend_profiles/dummy_backend.yaml</span><button class="cp">复制</button></div><pre><code>profile_id: dummy_backend
+platform:
+  name: dummy_backend
+  component_type: platform
+physics:
+  name: semantic_proxy
+  component_type: physics
+  capabilities:
+    rigid_body: semantic_proxy
+    articulation: semantic_proxy
+renderer:
+  name: none
+  component_type: renderer
+  capabilities:
+    rgb: unsupported
+sensors:
+  - name: none
+    component_type: sensor
+control:
+  name: direct_delta
+  component_type: control
+process_runtime:
+  name: none
+  component_type: process_runtime
+metadata:
+  role: core_smoke_only
+  claim_boundary: no simulator fidelity or benchmark compatibility claim</code></pre></div>
+        <p>逐 key 读这份"诚实到极致"的最小 profile：</p>
+        <ul>
+          <li><code>platform.name: dummy_backend</code>——不是任何真实仿真器，只是一个壳。</li>
+          <li><code>physics</code> 的两条能力 <code>rigid_body</code> / <code>articulation</code> 都标 <code>semantic_proxy</code>：它<b>不算</b>真实动力学，只是个语义近似。这一行直接决定了所有基于它的结果的 claim boundary。</li>
+          <li><code>renderer.capabilities.rgb: unsupported</code>——明说"我不出图像"。它<i>没有</i>偷偷返回一张黑图假装成功，而是显式声明不支持。这正是 no-silent-fallback 在后端声明层的体现。</li>
+          <li><code>sensors</code> 是个只有一个 <code>name: none</code> 的列表，<code>control</code> 是 <code>direct_delta</code>（直接把动作当成 delta 应用），<code>process_runtime.name: none</code>——没有场景语义状态机。</li>
+          <li><code>metadata</code> 把话挑明：<code>role: core_smoke_only</code>，<code>claim_boundary: no simulator fidelity or benchmark compatibility claim</code>。这个 profile 存在的全部意义就是让 <code>examples/run_smoke.py</code> 能在<b>零仿真器依赖</b>下跑通整条 trace 管线——pyproject 的运行时依赖只有 <code>pyyaml</code> 和 <code>typing-extensions</code>，引擎都在 adapter 侧。</li>
+        </ul>
+
+        <div class="bridge sm">
+          <div class="c-h"><span class="tag">从物理后端 看</span> 一份"全是 proxy"的 profile 仍然是合法后端</div>
+          <p>从真实引擎的视角看，<code>dummy_backend</code> 像个笑话——它什么物理都不算。但在 EOS 的证据框架里它完全合法：它<i>诚实地</i>声明了自己每一格的保真度，因此它产出的 trace 仍是有效证据——只不过证据的<b>边界</b>被 profile 卡得死死的。这比一个偷偷返回 <code>success=true</code> 的"高保真"假后端要强得多。诚实的代理 &gt; 不诚实的逼真。</p>
+        </div>
+
+        <h2 id="mujoco">对照：mujoco_autobio.yaml 富在哪</h2>
+        <p>把 dummy 放在一边，看 <code>configs/backend_profiles/mujoco_autobio.yaml</code> 这份"富"profile，能看清同一套 schema 怎么承载真实运行时的全部复杂度：</p>
+        <ul>
+          <li><b>带版本的真物理</b>：<code>physics.name: mujoco</code>，<code>version: "3.3.0"</code>，<code>rigid_body / articulation / contact</code> 全是 <code>native</code>——真实引擎、真实接触求解。</li>
+          <li><b>多个传感器</b>：<code>sensors</code> 列表里有 <code>autobio_rgb_cameras</code>（rgb native）和 <code>autobio_proprioception</code>（joint_state native），印证了"sensors 是列表"的设计。</li>
+          <li><b>一张 <code>interaction_dynamics</code> 子表，大量标 <span class="verdict blocked">blocked</span></b>：<code>contact_force_vectors</code>、<code>contact_force_summary</code>、<code>solver_constraints</code>、<code>plugin_or_process_forces</code>……几乎全是 <code>blocked</code>，每一格都附 <code>reason</code>（例如"WR7B evidence 没有 materialize 接触力向量/单位/坐标系/力的约定"）。这不是"测出来是 0"，而是"这一轴的证据这次没被产出，所以显式 block"——No Silent Fallback 的教科书示范。</li>
+          <li><b>富 <code>metadata</code></b>：<code>external_benchmark: AutoBio</code>、<code>anti_corruption_layer: adapters/autobio</code>、<code>reproduction_mode: faithful_runtime_when_requirements_met</code>，外加一整段 <code>limitations</code>（"requires external AutoBio repository…""does not make AutoBio or MuJoCo a core dependency""does not imply official benchmark reproduction without provenance review"）和 <code>faithful_claim_requires</code>（official_assets / official_plugins / external_commit / claim_boundary_review）。</li>
+        </ul>
+        <p>同一个 schema，从"全 proxy 的 smoke"到"真 MuJoCo + 一长串显式 blocked 轴 + faithful 复现的前置条件清单"，跨度很大却毫不变形——这正是把后端拆成组件束、每格独立定级带来的表达力。</p>
+
+        <div class="callout claim">
+          <div class="c-h">profile 声明 ≠ 结果保证</div>
+          <p>一份 <span class="term">BackendProfile</span> 声明的是"我打算/有能力提供什么保真度"，<b>不是</b>"这次 run 真的产出了什么、真的成功了什么"。<code>physics: native</code> 不等于这条 trace 里抓取成功；<code>interaction_dynamics</code> 里十条全 <code>native</code> 也不等于后端等价或 benchmark 复现。声明（registry）与实测（readiness ledger）是两层，绝不能混为一谈。这条区分是 <a href="2-4-capability-ledger.html">2.4</a> 整节的主题——profile 是<i>菜单</i>，账本才是<i>这一餐实际端上桌的</i>。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>三点：（1）六组件落进代码是两个 frozen dataclass——<span class="term">BackendProfile</span>（platform 必填，其余可 None）与 <span class="term">ComponentProfile</span>（name + type + version + capabilities + metadata），不可变因此可当证据指纹写进 trace；（2）<span class="term">CapabilityTier</span>（NATIVE / REDUCED / SEMANTIC_PROXY / EMULATED / UNSUPPORTED）把每格能力<i>诚实定级</i>，把 claim boundary 前置到声明阶段；（3）同一份 YAML schema 既能承载零依赖的 <code>dummy_backend</code>，也能承载真 MuJoCo 3.3.0 + 满屏 <code>blocked</code> 轴的 <code>mujoco_autobio</code>。</p>
+        <p>下一节，我们带着这套词汇走出去，逐一看真实引擎——Isaac / MuJoCo / Genesis / PyBullet / Newton——把它们各自映射到这六个组件上。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PR 纪律：让项目对自己诚实 · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="8-3">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 8 · Capstone · 8-3</div>
+        <h1>PR 纪律：让项目对自己诚实</h1>
+        <p class="lede">整本书讲的"证据""claim boundary""不污染 core"，听起来都很高尚。但高尚的原则如果只活在文档里，迟早会被一个赶 deadline 的 PR 悄悄破坏。EOS 的最后一课，是它怎么把这些原则<b>固化成机器会执行的纪律</b>：几条 PR 前必跑的命令、几道 make gate、一条 Record Rule、一份 claim boundary 模板。这一节是全书的文化收束——<i>正是这套纪律，让前面所有的"证据"配得上被信任。</i></p>
+
+        <h2 id="three-commands">三条必跑命令</h2>
+        <p>任何非平凡 PR 之前，三条命令必须绿：</p>
+
+        <div class="code" data-lang="bash"><div class="code-h"><span class="fn">terminal</span><button class="cp">复制</button></div><pre><code>python examples/run_smoke.py          # trace 主干还跑得通吗
+pytest -q                             # 单元/集成测试
+python scripts/check_core_leakage.py  # core 里有没有混进领域名/sim 名</code></pre></div>
+
+        <p>三条各守一个底线，缺一不可：</p>
+        <ul>
+          <li><span class="term">run_smoke.py</span>——确认评测路径 A 的 <code>build spec → run → evaluate → save</code> 没坏（就是你在 <a href="8-1-run-smoke.html">8.1</a> 跑的那条）。</li>
+          <li><span class="term">pytest -q</span>——常规测试网，包括那些守着 <a href="../03-trace-state/3-3-episode-trace.html">trace 不变量</a>、State V2 拒绝 legacy key、repo-commit 取自所属 repo 而非 CWD 的测试。</li>
+          <li><span class="term">check_core_leakage.py</span>——扫 <code>core/**/*.py</code>，禁止出现 <code>ebench / genmanip / mujoco / pipette / centrifuge / qpos / qvel</code> 这类 token。这是<a href="../01-foundations/1-4-core-boundaries.html">铁律一</a>从"约定"变成"CI 红灯"的那一步：它比文档 CLAUDE.md 的短表更严，词边界匹配，出现一个就 fail。</li>
+        </ul>
+
+        <div class="callout note">
+          <div class="c-h">DSW / CPFS：用 $EEOS_PYTHON</div>
+          <p>在共享环境里把上面三条的 <code>python</code> 换成 <code>$EEOS_PYTHON</code>（指向 <code>.../envs/embodied-eval-os-py310/bin/python</code>），否则可能跑到错误的解释器。如果某条命令在你的环境里确实不可用，<a href="#three-commands">PR 纪律</a>要求你在 PR 里<b>写清原因</b>——而不是默默跳过。</p>
+        </div>
+
+        <h2 id="make-gates">分层的 make gate</h2>
+        <p>三条命令只是最快的那一层。真正的关卡是一组分层 gate，越往后越严，对应 <a href="../01-foundations/1-2-claim-boundary.html">release claim levels</a> 越往宽走：</p>
+        <ul>
+          <li><span class="term">make check</span> / <span class="term">check-local</span>——快速 commit gate：smoke + 非 scenario 的 pytest + leakage + state-v2 迁移检查 + profile 检查 + diff 检查。日常提交跑这个。</li>
+          <li><span class="term">make check-pr</span>——开 PR 前的更宽一层。</li>
+          <li><span class="term">make check-merge</span>——合并前。</li>
+          <li><span class="term">make release-live-gate</span> / <span class="term">release-live-sdk-gate</span>——发布级。这一层才碰 live SDK lane，由 <code>check_required_live_lanes.py</code>、<code>check_architecture_debt.py</code> 之类强制 <a href="../01-foundations/1-3-no-silent-fallback.html">no-silent-fallback</a>：缺测量就得显式记 <code>blocked_*</code>，绝不许填 0 或 success=true 蒙混过去。</li>
+        </ul>
+        <p>这套阶梯的意义是：你日常迭代不必跑全套，但<i>没有任何路径能绕过 gate 直接声称发布级结论</i>。叙事里"由窄到宽不许跳级"的纪律，在 Makefile 里有物理对应。</p>
+
+        <h2 id="record-rule">Record Rule：给每个决定留痕</h2>
+        <p>非平凡改动，除了过 gate，还要留一份<b>带日期的记录</b>，放在 <span class="term">docs/records/YYYY-MM-DD-short-title.md</span>。模板是固定的六段：</p>
+
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">docs/records/2026-06-13-my-change.md</span><button class="cp">复制</button></div><pre><code># 2026-06-13 Short Title
+
+## Context            ── 为什么要改
+## Decision / Change  ── 改了什么、为什么这样改
+## Files touched      ── 动了哪些文件
+## Validation         ── 跑了哪些命令、结果如何
+## Known limitations  ── 这次没解决/不声称的东西
+## Next actions       ── 后续要做什么</code></pre></div>
+
+        <p>这不是为了好看。整本书的 <a href="../07-hard-problems/7-1-state-transfer.html">硬仗时间线</a>——trace/evidence spine、AutoBio 的 <code>faithful_reproduction_not_approved</code>、stage50 的 qpos 重映射 bug、WR/judgeable loop 的 first-divergence 账本——之所以能被你今天读到、能被追溯"当时为什么这么决定"，全靠这一条条 record。<b>Known limitations</b> 那一段尤其重要：它逼着每个改动作者，亲手写下"我这次<i>没</i>证明什么"。</p>
+
+        <div class="bridge ev">
+          <div class="c-h"><span class="tag">从评测科学 看</span> Record 与 claim 模板，就是机构化的 model card</div>
+          <p>评测科学里有一套对抗"过度宣称"的制度工具：<span class="term">Model Cards</span>（Mitchell 等，FAT* 2019）要求模型附上"适用范围 / 不适用范围 / 已知局限"；<span class="term">Datasheets for Datasets</span>（Gebru 等，CACM 2021）要求数据集附上来源与动机；NeurIPS 的 <span class="term">reproducibility checklist</span>（Pineau 等，JMLR 2021）逼作者交代 seed、显著性、算力。EOS 的 Record Rule + PR claim 模板，本质就是把这些"institutional honesty"机制搬进了一个评测 OS 的工程流程里——每条 trace 有 provenance，每个改动有 known limitations，每个 PR 有"proves / does not prove"。诚实不再依赖个人自觉，而是被流程强制。</p>
+        </div>
+
+        <h2 id="pr-template">PR 模板里的两道诚实检查</h2>
+        <p>PR 模板本身带两段不能空着的检查，它们是这套文化最锋利的部分：</p>
+        <ul>
+          <li><b>Core boundary check</b>——你这次有没有往 core 里加领域名/导入？（呼应 leakage 脚本，但要你用人话再确认一遍 placement：该进 pack 的进了 pack，该进 adapter 的进了 adapter。）</li>
+          <li><b>Claim boundary</b>——分两栏写明：<i>What this PR proves</i> / <i>What this PR does not prove</i>。这就是全书那个琥珀色方框，在 PR 流程里的强制版。</li>
+        </ul>
+
+        <div class="callout claim">
+          <div class="c-h">这一节（和这本书）真正证明了什么</div>
+          <p>把整本书收束成一句：EOS 的护城河不是它支持多少个仿真器，而是<b>它对自己有多诚实</b>。<span class="term">check_core_leakage.py</span> 让"不污染 core"成为红灯；分层 make gate 让"不跳级声称"成为关卡；Record Rule 让每个决定都带着 Known limitations 留痕；PR 模板的 "proves / does not prove" 让每次合并都得先划清边界。<br>
+          这套纪律<b>不能</b>替你证明你的模型很强、你的物理很准、你复现了某个官方 benchmark——它从不声称这些。它能做的，是让别人<i>有理由相信</i>你 trace 里的每一个数。前面七部分讲的所有"证据"，正是被这一节的纪律撑起来的：没有它，trace 只是好看的 JSON；有了它，trace 才是<b>可审计的证据</b>。这就是这本书想留给你的最后一个直觉。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>三条必跑命令（smoke / pytest / leakage）守底线，分层 make gate 守 claim 级别，Record Rule 给每个决定留痕（尤其 Known limitations），PR 模板的 Core boundary check 与 "proves / does not prove" 把诚实写进每次合并。这套东西合起来，就是 EOS 把"claim boundary"从一句口号变成一条工程流水线的方式。</p>
+        <p>书到这里讲完了。接下来是附录：术语表、仓库地图、六组件/八动词/claim levels/禁词的速查表，以及一份你可以顺着往下读的参考文献。把它们当工具书随手翻。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

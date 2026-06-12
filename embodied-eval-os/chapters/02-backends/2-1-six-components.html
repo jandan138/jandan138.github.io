@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>一个后端不是一个字符串：六大组件 · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="2-1">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 2 · Backend Composability · 2-1</div>
+        <h1>一个后端不是一个字符串：六大组件</h1>
+        <p class="lede">在 EBench 里，"后端"是一个名字：<span class="term">Isaac Sim</span>。你说"我在 Isaac 上跑"，所有人都懂——因为那套栈是焊死的。可一旦你想问"这个失败是渲染器的锅还是物理的锅""换个渲染器结果还成不成立""把 PhysX 换成 MuJoCo physics、其它都不变、模型还行不行"，那个单一的字符串就立刻不够用了。这一节我们把"后端"这个词拆开——拆成 EOS 强制记录的<b>六个组件</b>。这是铁律三，也是后面整个 Part 2 的地基。</p>
+
+        <h2 id="why-string-fails">为什么"一个名字"会骗你</h2>
+        <p>设想你看到一行实验结论：<i>"模型在 Isaac 上 success rate 72%，在 MuJoCo 上掉到 41%。"</i> 这句话听起来像个发现，其实什么都没说清。Isaac 和 MuJoCo 之间，<b>同时</b>变了一大堆东西：物理求解器不同、渲染管线不同（RTX 光追 vs 简易 OpenGL）、传感器噪声模型不同、控制接口的语义不同、连场景资产的导入路径都可能不同。掉的那 31 个百分点，到底是因为模型看不惯新渲染器的图像，还是因为新物理引擎下接触力不一样导致抓取打滑？<span class="term-i">你无法归因</span>。</p>
+        <p>这正是 EOS 的核心主张之一：<b>差异是证据，不是能力面</b>。但一个差异要能当证据用，前提是你能说清"到底是哪个变量变了"。把后端压成一个字符串，等于把所有自变量绑在一起一起拧——这在评测科学里是最基本的混淆（confounding）。EOS 的解法简单而严厉：永远不许把后端只描述成 <code>Isaac</code> / <code>MuJoCo</code> / <code>Genesis</code>，而要把它拆成六个独立可换的组件。</p>
+
+        <div class="bridge sm">
+          <div class="c-h"><span class="tag">从物理后端 看</span> 真实引擎本来就是"组件束"</div>
+          <p>这个拆分不是 EOS 发明的人造概念——真实引擎本身就是一捆组件。<span class="term">Isaac Sim</span> 是 USD 场景描述 + <span class="term">PhysX</span> 物理 + <span class="term">RTX</span> 光追渲染 + 一套传感器/相机模型 + articulation controller，这些本来就是可以各自替换的层（Isaac Lab 现在甚至能在同一个壳里换 PhysX / Warp / Newton / MuJoCo 物理）。<span class="term">MuJoCo</span> 的物理求解器、它的 OpenGL 渲染器、它的 actuator 模型也是三件不同的东西。EOS 只是<i>拒绝把这捆东西重新打包成一个名字</i>，然后假装它是原子的。</p>
+        </div>
+
+        <h2 id="six-components">六个组件，逐一定义</h2>
+        <p>下面是 <span class="term">backend-composability.md</span> 给出的六个组件的权威定义与例子。请把这张表当作 Part 2 的字典——后面讲 <span class="term">BackendProfile</span> 数据类（<a href="2-2-backend-profile.html">2.2</a>）、讲具体引擎（<a href="2-3-engines.html">2.3</a>）、讲能力账本（<a href="2-4-capability-ledger.html">2.4</a>）都直接复用这六个名字。</p>
+        <table>
+          <thead><tr><th>组件</th><th>定义（原文）</th><th>例子</th></tr></thead>
+          <tbody>
+            <tr><td><b>platform</b></td><td>the integration environment or simulator shell</td><td>Isaac Sim; MuJoCo; Genesis; custom split backend; real robot runtime</td></tr>
+            <tr><td><b>physics</b></td><td>the source of physical transition dynamics</td><td>PhysX; Newton; MuJoCo physics; Genesis physics; real world; reduced semantic physics</td></tr>
+            <tr><td><b>renderer</b></td><td>the source of image-like observations</td><td>Isaac RTX; Blender Cycles; MuJoCo renderer; Genesis renderer; real camera; offline rerenderer</td></tr>
+            <tr><td><b>sensors</b></td><td>the source of sensor readings</td><td>RGB; depth; segmentation; force/torque; tactile; proprioception; instrument logs</td></tr>
+            <tr><td><b>control</b></td><td>the execution interface for actions</td><td>joint action; ee-delta; action chunk; skill command; ROS control; articulation controller</td></tr>
+            <tr><td><b>process runtime</b></td><td>the source of scenario-specific semantic state transitions</td><td>reduced liquid model; device state machine; hazard event generator; lab pipette primitive; conveyor; terrain transition</td></tr>
+          </tbody>
+        </table>
+        <p>注意最后一个 <b>process runtime</b> 最容易被忽略，却最体现 EOS 的野心。它是"场景专属语义状态转移的来源"——比如"液体被吸进移液器后体积怎么变""危险事件什么时候触发""传送带把零件送到哪"。物理引擎管的是刚体怎么动，process runtime 管的是<i>场景语义</i>怎么演化。这两者必须分开，因为一个 <span class="term-i">reduced liquid model</span>（语义代理）绝不等于真实流体力学——这条 claim boundary 会在 scientific_lab pack 里反复出现。</p>
+
+        <h2 id="why-split">拆开能买到什么：五种"只换一个变量"的对比</h2>
+        <p>把后端拆成六个可独立替换的组件，立刻解锁了一组干净的对照实验。每一种都是"固定其它一切，只动一个组件"，从而把原本纠缠在一起的归因问题拆开：</p>
+        <ul>
+          <li><b>同 rollout 换 renderer</b>：同一条动作轨迹、同一套物理，只换渲染器——分离 <span class="term-i">视觉泛化</span>（模型认不认得新画风）和动力学。</li>
+          <li><b>同 task 换 physics</b>：任务规格、度量规格都钉死，只换物理引擎——分离 <span class="term-i">simulator artifact</span>（求解器松弛带来的接触差异）和模型真本事。</li>
+          <li><b>同 task 换 embodiment</b>：换本体，看模型对新关节布局的鲁棒性。</li>
+          <li><b>同 trace 换 evaluator</b>：同一条 <span class="term">EpisodeTrace</span>，换不同评判器——分离"模型表现"和"我们怎么打分"。</li>
+          <li><b>同 scene 换 sensor noise</b>：只动传感器，看 renderer-dependent failure 还是 physics-dependent failure。</li>
+        </ul>
+        <p>这五种对照，每一种都因为"只有一个自变量在动"而具备归因能力。这就是组件拆分的全部回报：它把"Isaac vs MuJoCo 整体掉了 31%"这种<b>不可归因</b>的观察，变成"在任务与度量固定下，PhysX 与 MuJoCo physics 的接触差异导致抓取阶段分叉"这种<b>可归因</b>的证据。</p>
+
+        <div class="callout warn">
+          <div class="c-h">跨后端实验的硬约束：只改一个组件</div>
+          <p>EOS 对跨后端实验有一条强制措辞纪律。<b>不要</b>写"Compare Isaac vs MuJoCo"——那句话里至少六个变量同时变了，结论无法归因。<b>要</b>写"Compare PhysX vs MuJoCo physics while keeping task spec and metric spec fixed"。换句话说：跨后端对比必须是<i>组件级</i>的，而不是<i>平台级</i>的，并且要显式说明哪五个组件被钉死、哪一个被替换。一个改了多个组件的"对比"在 EOS 里不被当作有效证据。</p>
+        </div>
+
+        <div class="bridge eb">
+          <div class="c-h"><span class="tag">从 EBench 看</span> 为什么 EBench 不需要这条铁律</div>
+          <p>EBench 完全可以只说"Isaac"，因为它的后端是<b>焊死</b>的：Isaac Sim 4.1 + Lift2 本体 + GenManip server + 一套固定的 action 维度，绑成一个整体，从不拆开替换。在那个世界里，"后端"确实就是一个字符串，而且够用。但这正是 EOS 要超越的局限——一旦你想跨场景、跨引擎、跨本体地评测，并且想把差异当证据，那个焊死的整体就必须被拆成可组合的组件。EBench 的这套栈在 EOS 里被收进 <span class="term">ebench_genmanip_legacy.yaml</span>（<code>purpose: compatibility_only</code>），作为一个<i>组件已经被拆开标注</i>的 legacy profile。</p>
+        </div>
+
+        <h2 id="composer">动手：组一个后端，看它能做什么对比</h2>
+        <p>把六个组件组合成一个 profile 是一回事，理解"这个组合<i>能</i>支持哪些对照实验、<i>不能</i>支持哪些"是另一回事。下面这个部件让你亲手拼装组件，并立刻看到由此解锁（或仍然缺失）的对比实验。</p>
+
+        <div class="lab">
+          <div class="lab-h"><span class="lab-tag">interactive</span><span class="lab-t">backend composer：六组件 → profile → 它能/不能支持的对比</span></div>
+          <div class="lab-body" data-widget="backend-composer"></div>
+          <div class="lab-cap">逐一选择 platform / physics / renderer / sensors / control / process runtime，下方会算出你能跑哪些"只改一个变量"的对照实验。试试只改 physics 保持其它不变——看它点亮"physics 归因"，而同时改 renderer + physics 会让对比失去归因能力。</div>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>三点：（1）"后端"在 EOS 里不是一个字符串，而是 <b>platform / physics / renderer / sensors / control / process runtime</b> 六个独立可换的组件——这是铁律三；（2）拆开的回报是<b>可归因</b>：你能跑"只换一个变量"的对照，分离视觉泛化与动力学、simulator artifact 与模型本事；（3）跨后端实验必须只改一个组件，措辞要落到组件级（"PhysX vs MuJoCo physics, task+metric fixed"），不许停在平台级（"Isaac vs MuJoCo"）。</p>
+        <p>下一节，我们把这六个组件落进代码：看 <span class="term">BackendProfile</span> / <span class="term">ComponentProfile</span> 这两个 frozen dataclass 和 <span class="term">CapabilityTier</span> 枚举怎么把"组合"变成一份可校验、可写进每条 trace 的 profile。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

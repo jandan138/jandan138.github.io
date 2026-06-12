@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>跑通 smoke，读一条 trace · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="8-1">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 8 · Capstone · 8-1</div>
+        <h1>跑通 smoke，读一条 trace</h1>
+        <p class="lede">前面七部分都在讲架构、契约、纪律。现在该把手弄脏了。这一节我们只做一件极小的事：在你自己的机器上跑通 <span class="term">examples/run_smoke.py</span>，让它从零造出一条 <span class="term">EpisodeTrace</span>，然后打开那个 JSON 文件，亲眼确认——这本书反复强调的"证据"，长什么样、字段在哪、claim boundary 写在哪一行。这是把整本书"落地"的第一步：一条真实的、可审计的证据 artifact。</p>
+
+        <h2 id="what-smoke-is">smoke 是什么，不是什么</h2>
+        <p>EOS 有两条评测路径。一条是 provider 驱动的 live evidence-chain loop（<span class="term">RPF-10</span> / <span class="term">EVL</span>，我们在 <a href="../06-runtime/6-2-rpf.html">6.2</a> 看过它的八动词时序）；另一条是<i>极简的 in-process</i> 路径，由 <span class="term">EpisodeRunner</span> 驱动。<span class="term">run_smoke.py</span> 走的是后者。它不连任何真实仿真器，用的是一个纯 Python 的 <span class="term">SemanticProxyBackend</span>——没有 PhysX、没有 MuJoCo、没有渲染。它存在的唯一意义，是用最少的依赖,把"造一条合法 trace"这条主干跑通一遍。</p>
+        <p>正因为如此，它也是 <a href="8-3-pr-discipline.html">8.3</a> 里 PR 前必跑的第一条命令：如果连 smoke 都跑不通，说明 trace 的骨架本身坏了，后面什么 live lane 都不用谈。</p>
+
+        <div class="callout note">
+          <div class="c-h">运行时依赖只有两个</div>
+          <p>别担心装一堆仿真器。EOS 的 <span class="term">pyproject.toml</span> 里运行时依赖<b>只有</b> <code>pyyaml</code> 和 <code>typing-extensions</code>——所有 sim 引擎都是 adapter 侧的可选依赖。smoke 用的 <span class="term">SemanticProxyBackend</span> 是零外部依赖的纯 Python，所以它在任何装了 Python 3.10+ 的环境里都能跑。</p>
+        </div>
+
+        <h2 id="reading-the-script">逐行读 run_smoke.py</h2>
+        <p>整个脚本不到六十行，骨架就是 EOS 评测路径 A 的最小调用序列：<i>建 spec → 装 runner → run → evaluate → 存档</i>。先看怎么声明被评测的世界。</p>
+
+        <div class="code" data-lang="python"><div class="code-h"><span class="fn">examples/run_smoke.py</span><button class="cp">复制</button></div><pre><code>scene = SceneSpec(
+    scene_id="dummy_scene",
+    asset_instances=[AssetInstance(instance_id="obj", asset_id="dummy_object")],
+)
+task = TaskSpec(
+    task_id="smoke.move_to_threshold",
+    scenario_pack="smoke",
+    scene_id="dummy_scene",
+    instructions=["Move the dummy object to position &gt;= 1.0."],
+    success_conditions=["semantic_proxy_object.position &gt;= 1.0"],
+)</code></pre></div>
+
+        <p><span class="term">SceneSpec</span> 和 <span class="term">TaskSpec</span> 都是 core 里 domain-agnostic 的契约（我们在 <a href="../01-foundations/1-1-evidence.html">1.1</a> 见过它们）。注意 <code>scenario_pack="smoke"</code>：哪怕是这个玩具任务，也老老实实声明了自己属于哪个 pack——因为这个字段最终会被原样写进 trace，成为 provenance 的一部分。<code>success_conditions</code> 是一句声明式的成功判据，等会儿 evaluator 会照它判分。</p>
+
+        <p>接下来把 backend、model、spec 装进 <span class="term">EpisodeRunner</span> 并 run。这是整条路径的心脏：</p>
+
+        <div class="code" data-lang="python"><div class="code-h"><span class="fn">examples/run_smoke.py</span><button class="cp">复制</button></div><pre><code>runner = EpisodeRunner(
+    backend=SemanticProxyBackend(),
+    model=RandomPolicyAdapter(delta=0.4),
+    task_spec=task,
+    scene_spec=scene,
+    max_steps=10,
+)
+trace = runner.run(seed=42)
+result = TaskOutcomeEvaluator().evaluate_episode(trace)
+trace.episode_metrics.update(result.summary)</code></pre></div>
+
+        <p>每个零件都是一个可替换的契约实现：</p>
+        <ul>
+          <li><span class="term">SemanticProxyBackend</span> 满足 <span class="term">EpisodeBackend</span> 协议——它提供 <code>load_scene / reset / step / measure / project_physical_state</code>。这里它做的"物理"只是一个语义代理：把一个标量 position 往阈值推。</li>
+          <li><span class="term">RandomPolicyAdapter(delta=0.4)</span> 满足 <span class="term">EpisodeModel</span> 协议（<code>reset / act</code>）。它的 <code>act()</code> 永远返回 <code>{"delta": 0.4}</code>——是全书最朴素的"策略"，但形状是真的（我们在 <a href="8-2-extend.html">8.2</a> 会照着它写自己的 adapter）。</li>
+          <li><code>run(seed=42)</code> 跑最多 10 步，产出一条 <span class="term">EpisodeTrace</span>。</li>
+          <li><span class="term">TaskOutcomeEvaluator</span> 拿这条 trace 算 <span class="term">task_outcome</span> family 的指标，回填进 <code>episode_metrics</code>。</li>
+        </ul>
+
+        <p>这里有一个容易被忽略、却是 EOS 招牌的细节：<span class="term">EpisodeRunner</span> 会把 <span class="term">STANDARD_BACKEND_COMPONENTS</span>——<code>platform / physics / renderer / sensors / control / process_runtime</code> 六个组件——<b>强制写进每一条 trace</b>。哪怕你的 backend 是个玩具，它也得交代清楚这六格各是什么。这就是<a href="../02-backends/2-1-six-components.html">铁律三</a>在代码里的落点：没有"一个 backend 就叫 Isaac"这种含糊。</p>
+
+        <h2 id="run-it">真的跑一下</h2>
+        <p>最简单的形式，不写任何 trace 文件，只在终端打印摘要：</p>
+
+        <div class="code" data-lang="bash"><div class="code-h"><span class="fn">terminal</span><button class="cp">复制</button></div><pre><code>python examples/run_smoke.py</code></pre></div>
+
+        <p>你会看到三行输出：<code>episode_id=...</code>、<code>steps=10</code>、<code>metrics={...}</code>。要真正读 trace，加上 <code>--trace-dir</code>，让它把 JSON 落盘：</p>
+
+        <div class="code" data-lang="bash"><div class="code-h"><span class="fn">terminal</span><button class="cp">复制</button></div><pre><code>python examples/run_smoke.py --trace-dir /tmp/eos_smoke
+# 末行会打印 trace_path=/tmp/eos_smoke/&lt;episode_id&gt;.json</code></pre></div>
+
+        <p>落盘是靠 <code>TraceStore(args.trace_dir).save_json(trace)</code> 完成的——<span class="term">TraceStore</span> 是 core 的 recorder，负责把 trace 序列化成寻址稳定的 JSON。</p>
+
+        <div class="callout note">
+          <div class="c-h">在 DSW / CPFS 上：用 $EEOS_PYTHON</div>
+          <p>共享开发环境里系统 <code>python</code> 未必是对的解释器。项目约定用 <code>$EEOS_PYTHON</code>（指向 <code>.../envs/embodied-eval-os-py310/bin/python</code>）跑所有命令，例如 <code>$EEOS_PYTHON examples/run_smoke.py</code>。这一点在 <a href="8-3-pr-discipline.html">8.3</a> 讲 PR 前置命令时还会再提一次。</p>
+        </div>
+
+        <div class="bridge eb">
+          <div class="c-h"><span class="tag">从 EBench 看</span> 你第一次"跑通"是 gmp submit，这次是一条本地 smoke</div>
+          <p>在 EBench 里，你第一次让模型动起来，多半是往 GenManip server 发一个 <span class="term">gmp submit</span>，等一个远端 rollout 回来，最后拿到一个 success 数。那是 client–server 黑盒：你看到的是<i>结论</i>，看不到中间的证据骨架。这里的 smoke 反过来——它在你本地一次跑完，<b>产物不是一个分数，而是一条完整的证据 artifact</b>。你能打开它、逐字段读它。EOS 把重量从"拿到一个数"挪到了"拿到一条能审计的 trace"，这一节就是第一次亲手验证这个转变。</p>
+        </div>
+
+        <h2 id="reading-trace">打开 JSON，找证据</h2>
+        <p>现在 <code>cat</code> 那个 trace 文件（或在编辑器里打开）。它就是 <a href="../03-trace-state/3-3-episode-trace.html">3.3</a> 里 <span class="term">EpisodeTrace</span> dataclass 序列化的样子。把目光放在三处——它们是这条 trace 之所以是"强证据"而非"一个裸数字"的原因：</p>
+
+        <div class="code" data-lang="json"><div class="code-h"><span class="fn">/tmp/eos_smoke/&lt;episode_id&gt;.json（示意结构）</span><button class="cp">复制</button></div><pre><code>{
+  "episode_id": "...",
+  "task_id": "smoke.move_to_threshold",
+  "scenario_pack": "smoke",
+  "backend_profile_id": "...",
+  "seed": 42,
+  "model_profile_id": "random_policy",
+  "versions": { "repo_commit": "...", "task_spec": "...", "...": "..." },
+  "backend_components": {
+    "platform": "...", "physics": "...", "renderer": "...",
+    "sensors": "...", "control": "...", "process_runtime": "..."
+  },
+  "privileged_state_policy": "model_input_excludes_privileged_state",
+  "claim_boundary": "Trace evidence only; no simulator fidelity or real-world safety claim.",
+  "steps": [ { "step_index": 0, "...": "..." } ],
+  "episode_metrics": { "...": "..." }
+}</code></pre></div>
+
+        <ol>
+          <li><b>六个 <code>backend_components</code></b>：哪怕是 SemanticProxy，它也把 platform/physics/renderer/sensors/control/process_runtime 六格填齐了。这是你日后做跨后端对比的根基——没有这六格，你根本说不清"换了哪个组件"。</li>
+          <li><b><code>claim_boundary</code></b>：默认值就写死在那里——<i>"Trace evidence only; no simulator fidelity or real-world safety claim."</i> 这条 smoke 用的是语义代理，它<b>不</b>声称仿真保真，更<b>不</b>声称真实世界安全。这行字是 EOS 诚实的物理体现。</li>
+          <li><b><code>versions</code></b>：repo commit、task spec version、seed、determinism 相关信息都在这里。<a href="../03-trace-state/3-3-episode-trace.html">3.3</a> 说过一句狠话——"Without this metadata, the trace is not considered valid evidence."（没有这些元数据，这条 trace 就不算有效证据。）一条没有 provenance 的 trace，等于没有 trace。</li>
+        </ol>
+
+        <p>顺带留意 <code>privileged_state_policy</code> 默认是 <code>model_input_excludes_privileged_state</code>：模型看到的输入<i>不含</i>特权状态，这正是 <a href="../03-trace-state/3-3-episode-trace.html">privileged state rule</a> 的默认姿态。RandomPolicy 只看到脱敏后的 observation，evaluator 才看得到全貌。</p>
+
+        <div class="callout claim">
+          <div class="c-h">这条 smoke 证明了什么 / 不证明什么</div>
+          <p><b>证明：</b>EOS 的 trace 主干能在零仿真依赖下从头跑通，产出一条字段齐全、provenance 完整、claim boundary 显式的 <span class="term">EpisodeTrace</span>；评测路径 A 的 <code>build spec → run → evaluate → save</code> 链路是通的。<br>
+          <b>不证明：</b>任何关于<i>仿真保真</i>、<i>物理正确</i>、<i>跨后端等价</i>或<i>真实世界安全</i>的东西。<span class="term">SemanticProxyBackend</span> 是一个 <span class="term">semantic proxy</span>，不是 real physics；它的 <code>task_outcome</code> 只对这个玩具阈值有意义。"跑通了 smoke"是<b>contract closure</b>（证据链存在），不是 <b>outcome closure</b>（某个真实结果成立）。把这两者分清，是整本书教你的第一直觉。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>你刚刚亲手造了一条证据，并读懂了它为什么是证据：六个 backend 组件交代了"在哪台机器上、用什么物理/渲染跑的"，<code>versions</code> 钉死了"在哪个 commit、哪个 seed 下复现"，<code>claim_boundary</code> 老实写明"这只能证明 trace 层面的东西"。一条 trace 之所以可信，不是因为它给了你一个数，而是因为它把这些边界全都摊开在 JSON 里。</p>
+        <p>下一节，我们从"读别人写好的零件"转向"自己写零件"：用最小的代价、不碰一行 core，给 EOS 接上一个你自己的 <span class="term">ModelAdapter</span> 和一个最小的 scenario pack。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

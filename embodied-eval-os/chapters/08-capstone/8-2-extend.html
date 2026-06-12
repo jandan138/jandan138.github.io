@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>写一个最小 scenario pack + model adapter · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="8-2">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 8 · Capstone · 8-2</div>
+        <h1>写一个最小 scenario pack + model adapter</h1>
+        <p class="lede">上一节你跑通了别人写好的 smoke。这一节反过来——你要往 EOS 里<i>塞东西</i>：一个属于你的模型、一个属于你的场景。关键不是写得多，而是写在<b>哪一层</b>。EOS 的全部设计都在防一件事：让你的领域语义偷偷爬进 core。所以这一节真正的功夫，是学会"最小且不越界"地扩展——不碰一行 <span class="term">core/</span>，就让 runner 跑起你的世界。</p>
+
+        <h2 id="three-seams">三道接缝</h2>
+        <p>扩展 EOS 几乎总是落在三道接缝上，对应评测路径 A 里三个可替换的零件：</p>
+        <ul>
+          <li><b>一个 <span class="term">ModelAdapter</span></b>——你要评测的策略/世界模型/规划器，怎么把 observation 变成 action。</li>
+          <li><b>一个最小 scenario</b>——你的世界有什么语义、怎么从物理投影里读出"进展"。它<i>不是</i>一个 core 类，而是 pack 里的几个自由函数 + 几个 primitive 子类。</li>
+          <li><b>一个 evaluator 判据</b>——怎么从 trace 判定成功/进展，落进哪个 metric family。</li>
+        </ul>
+        <p>三道接缝的共同纪律是同一句话：<b>不改 core 抽象</b>。core 不知道你的场景字段叫什么，它只存 schema-validated 的 payload。下面逐一看。</p>
+
+        <h2 id="model-adapter">最小 ModelAdapter</h2>
+        <p>模型契约在 <span class="term">model_adapters/base.py</span> 的 <span class="term">ModelAdapter</span> ABC 里。它故意只把 <code>act()</code> 设为 <code>@abstractmethod</code>，其余（<code>reset / predict_future / rank_plans / assess_safety</code>）都有默认实现——因为不同 model family（actor_policy / vla / world_model / planner / safety_critic …）只需实现自己那几个动词。一个最小的 actor 只要实现 <code>reset</code> 和 <code>act</code>，形状跟 <a href="8-1-run-smoke.html">8.1</a> 用过的 <span class="term">RandomPolicyAdapter</span> 一模一样：</p>
+
+        <div class="code" data-lang="python"><div class="code-h"><span class="fn">model_adapters/my_threshold_policy.py（示意）</span><button class="cp">复制</button></div><pre><code>from embodied_eval_os.model_adapters.base import ModelAdapter
+
+
+class MyThresholdPolicy(ModelAdapter):
+    model_id = "my_threshold_policy"
+
+    def __init__(self, gain: float = 0.3) -&gt; None:
+        self.gain = gain
+
+    def reset(self, task_context: dict) -&gt; None:
+        # 只看脱敏后的 task_context；不要在这里偷看 privileged state
+        self._steps = 0
+
+    def act(self, observation: dict) -&gt; dict[str, float]:
+        self._steps += 1
+        return {"delta": self.gain}</code></pre></div>
+
+        <p>真实模型走的是同一道接缝，只是 <code>act()</code> 里换成对一个 sidecar model server 的 HTTP 调用——这正是仓库里已有的 <span class="term">HTTPPolicyAdapter</span>（<span class="term">http_policy.py</span>）做的事，它是接真模型的标准路径。<code>model_id</code> 会被 runner 抄进 trace 的 <code>model_profile_id</code>，成为 provenance 的一部分。</p>
+
+        <div class="callout warn">
+          <div class="c-h">坑：别在 act() 里偷看特权状态</div>
+          <p><code>act()</code> 只该消费<b>脱敏后</b>的 observation。privileged state（native dump、solver diagnostics、evaluator 真值）默认就不该进模型输入——这是 <span class="term">privileged_state_policy</span> 的默认姿态。如果你的模型确实需要特权状态（state-conditioned benchmark），必须<i>显式标注</i>，而不是默默读进来。一旦默默读了，你的 <code>standard_model_score</code> 就不再合法（它默认就是 <code>null</code>，只有在 standard_eval + 无 privileged state + forbidden-claim 检查通过时才非空）。</p>
+        </div>
+
+        <h2 id="scenario">最小 scenario：三个 primitive ABC + 一个 builder</h2>
+        <p>这是最容易写错"层"的地方，所以慢一点。仓库里<b>没有抽象 <code>ScenarioPack</code> 基类</b>——一个 pack 不是靠继承某个大类，而是靠三件事拼出来的：</p>
+        <ol>
+          <li>按需 subclass <span class="term">core/primitives</span> 里的三个 ABC 之一——<span class="term">InteractionPrimitive</span> / <span class="term">ProcessPrimitive</span> / <span class="term">DevicePrimitive</span>，它们各有一个 <code>update(physical_state) -&gt; dict</code>；</li>
+          <li>消费 <span class="term">PhysicalStateProjection</span>（backend-normalized 的物理投影，<a href="../03-trace-state/3-2-state-layers.html">L4</a>）；</li>
+          <li>产出一个落进 <span class="term">TaskSemanticState</span> 的 dict，再加几个自由函数（builder + evaluator predicate）。</li>
+        </ol>
+        <p>现有的 <span class="term">scenario_packs/visual_manipulation_micro/</span> 就是范本：它有一个 <code>build_visual_push_slide_scenario(...)</code> 返回一个 schema 打了标签的 dict，和一个 <code>evaluate_progress(...)</code> 判进展。照这个形状，你的最小 process primitive 可以是：</p>
+
+        <div class="code" data-lang="python"><div class="code-h"><span class="fn">scenario_packs/my_micro/primitives.py（示意）</span><button class="cp">复制</button></div><pre><code>from embodied_eval_os.core.primitives import ProcessPrimitive
+
+
+class MySlideProgressPrimitive(ProcessPrimitive):
+    # 全部标清楚：这是语义代理，不是真物理，模型看不到
+    fidelity_tier = "semantic_process_proxy"
+    model_visible = False
+    privileged_state_label = "evaluator_only"
+
+    def update(self, physical_state) -&gt; dict:
+        obj = physical_state.objects.get("obj", {})
+        pos = obj.get("pose", [0.0])[0]
+        return {"slide_progress": float(pos)}</code></pre></div>
+
+        <p>再配一个 builder，返回一个 schema-tagged 的世界声明（像 <code>build_visual_push_slide_scenario</code> 那样）：</p>
+
+        <div class="code" data-lang="python"><div class="code-h"><span class="fn">scenario_packs/my_micro/scenario.py（示意）</span><button class="cp">复制</button></div><pre><code>def build_my_slide_scenario(variant_id: str = "center_goal") -&gt; dict:
+    return {
+        "schema": "embodied_eval_os.scenario.my_micro.v0",
+        "variant_id": variant_id,
+        "allowed_backend_profiles": ["dummy_backend"],
+        "privileged_state_policy": "evaluator_only",
+        "official_benchmark_reproduction": False,
+        "limitations": ["semantic proxy only; no contact-force evidence"],
+    }</code></pre></div>
+
+        <p>注意 dict 里那几个字段——它们不是装饰，是 <a href="../04-packs-adapters/4-1-pack-contract.html">契约要求</a>里逐条对应的诚实声明，下面单独拎出来强调。</p>
+
+        <div class="bridge eb">
+          <div class="c-h"><span class="tag">从 EBench 看</span> "接入自己的模型" vs "接入自己的场景"</div>
+          <p>在 EBench 里，接入你自己的模型，是写一个 <span class="term">ModelClient</span>，按 client–server 协议回 action——一道接缝。EOS 把这件事拆成了两道独立接缝：<b>模型</b>是一个 <span class="term">ModelAdapter</span>（这一节左半），<b>场景</b>是一个 pack（右半）。两者通过 <span class="term">PhysicalStateProjection</span> / <span class="term">TaskSemanticState</span> 解耦，谁都不知道对方的内部。所以你可以换模型不动场景、换场景不动模型——这正是 EBench 那套焊死的栈做不到的事。</p>
+        </div>
+
+        <h2 id="non-negotiables">五条不可商量的纪律</h2>
+        <p>无论你的 pack 多小，下面五条都得满足。它们不是繁文缛节，而是让你的扩展"对自己诚实"的最低标准：</p>
+        <ul>
+          <li><b>NO core changes。</b>你的领域名（任何场景专属概念）一个都不能进 <span class="term">core/</span>。core 是场景中立的契约，你的语义留在 pack。<a href="8-3-pr-discipline.html">8.3</a> 的 <span class="term">check_core_leakage.py</span> 会替你把关。</li>
+          <li><b>声明 <code>allowed_backend_profiles</code>。</b>你的场景只在哪些 backend profile 上有意义，写明白。别让别人拿一个语义代理 profile 去声称物理结论。</li>
+          <li><b><code>privileged_state_policy = evaluator_only</code>。</b>过程/危险/真值字段是 evaluator 看的，不是模型输入。</li>
+          <li><b>至少留一条 smoke / dummy 路径。</b>哪怕只能在 <code>dummy_backend</code> 上跑通一条 trace，也比"声称支持却跑不起来"强。可跑通 = 可审计。</li>
+          <li><b>写清 limitations 与 <code>official_benchmark_reproduction = false</code>。</b>语义代理就老实说是语义代理。一个 semantic proxy primitive <b>不得</b>声称与任何官方 benchmark 插件物理等价。</li>
+        </ul>
+
+        <p>第三道接缝——evaluator——同样小。你只需要一个判据函数（或一个 <span class="term">Evaluator</span> 子类的 <code>evaluate_episode(trace)</code>），把 <code>slide_progress</code> 这样的语义字段折成一个 <span class="term">MetricResult</span>，归到某个抽象 family（如 <code>task_outcome</code> 或 <code>procedure</code>）。family 是 core 定义的抽象，metric 实例由你的 pack 给出——这条分工我们在 <a href="../05-metrics-reports/5-1-metric-families.html">5.1</a> 讲过。别在 family 名里塞领域词。</p>
+
+        <div class="callout claim">
+          <div class="c-h">一个最小 pack 证明了什么 / 不证明什么</div>
+          <p><b>证明：</b>你的场景语义能被 EOS 的层表达（primitive → <span class="term">TaskSemanticState</span>）、能跑出一条合法 trace、能被一个 evaluator 判读——而且<b>没动 core</b>。<br>
+          <b>不证明：</b>你的语义代理在物理上正确，或与任何官方 benchmark 等价。<code>fidelity_tier="semantic_process_proxy"</code> 和 <code>official_benchmark_reproduction=false</code> 这两个标签，就是你在 trace 里替自己划下的诚实边界。"我能用 EOS 的层表达 AutoBio 风格的任务"<i>不等于</i>"我复现了 AutoBio 的物理"——这正是 records 里 <span class="term">faithful_reproduction_not_approved</span> 那场清算的教训。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>扩展 EOS 的全部技巧，可以压成一句话：<b>把你的领域语义放进 pack，把你的模型放进 adapter，让 core 一个字都不知道。</b>三道接缝（model adapter / scenario primitive + builder / evaluator predicate）都很小，难的不是写，而是写在对的层、并在 dict 里把 <code>allowed_backend_profiles</code>、<code>privileged_state_policy</code>、<code>limitations</code>、<code>official_benchmark_reproduction</code> 这些诚实标签填齐。</p>
+        <p>但"我没动 core"这句话不能光靠自觉。下一节，我们看 EOS 用什么样的 PR 纪律——必跑命令、make gate、Record Rule、claim boundary 模板——把这份自觉变成项目级的、自动执行的诚实。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

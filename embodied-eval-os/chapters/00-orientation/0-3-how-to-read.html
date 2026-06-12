@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>怎么读这本书 · 三座桥 · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="0-3">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 0 · Orientation · 0-3</div>
+        <h1>怎么读这本书 · 三座桥</h1>
+        <p class="lede">这本书有一个隐含的前提：你不是一张白纸。你刚走出 <span class="term">EBench</span> 教程的前五章，脑子里装着 VLA、仿真栈、benchmark 方法论、client–server 评测引擎。这本书不会重教这些——它要做的，是从你已有的"家"出发，反复架桥过去。这一节交代三件事：我假设你已经会什么、那三座反复出现的"桥"长什么样、以及全书的排版与运行约定。花五分钟读它，后面会顺很多。</p>
+
+        <h2 id="audience">假设你从哪里来</h2>
+        <p>我假设你<b>读完了 EBench 教程的前五章</b>。具体说，我假设你已经懂：<span class="term">VLA</span>（一个 VLM backbone 接上输出 robot action 的能力，乃至 action chunking、flow matching、rectified flow 这些表达连续多模态动作的机制）；仿真栈（<span class="term">Isaac Sim</span> = USD + PhysX + RTX，外加 cuRobo、GenManip、LeRobot）；benchmark 方法论（把单一 success rate 摊成多轴 capability profile，用 tracks × splits 守训练/测试隔离，tasks/scoring/generalization）；以及为什么评测引擎要做成 client–server。</p>
+        <p>这些不会被重讲。它们是你的<b>出发点</b>，是我每次引入新概念时会回头指的"你已经知道的那个东西"。如果某段读着吃力，多半是因为它默认了上面某块知识——回 EBench 教程对应章节补一下，比硬啃这里更高效。</p>
+
+        <h2 id="three-bridges">三座桥：从已知到未知</h2>
+        <p>全书每当要引入一个 EOS 的新概念，我会尽量用一座<b>桥</b>把它接到你已有的知识上。桥有三种颜色，各自从一个不同的"已知世界"出发。下面我把三座桥各<i>实地</i>展示一次——这一段里你看到的方框，就是它们后面会反复出现的样子。</p>
+
+        <h3 id="bridge-eb">桥一 · 从 EBench 看</h3>
+        <p>第一座桥从你最熟的地方出发：你刚学完的 EBench。它负责把 EOS 的抽象拉回到具体的 GenManip / Lift2 / Isaac 经验上。</p>
+        <div class="bridge eb">
+          <div class="c-h"><span class="tag">从 EBench 看</span> 一座 eb 桥长这样</div>
+          <p>举个例子：当后面讲到 EOS 的 <span class="term">EmbodimentSpec</span> 时，eb 桥会说——"还记得 EBench 里焊死的 <span class="term">Lift2</span> 本体吗？在 EOS 里它不再是核心假设，而是<i>众多</i> EmbodimentSpec 中的一个；那套 action 维度、camera 名字也一并降级，关进 <span class="term">adapters/ebench/</span>。" 看到蓝色的 eb 桥，就知道："哦，这是在拿我学过的 EBench 概念作锚点。"</p>
+        </div>
+
+        <h3 id="bridge-ev">桥二 · 从评测科学 看</h3>
+        <p>第二座桥从<b>评测科学</b>出发——construct validity、reproducibility、model cards 这些方法论传统。EOS 的很多"看起来很轴"的纪律，其实在评测科学里有几十年的根。</p>
+        <div class="bridge ev">
+          <div class="c-h"><span class="tag">从评测科学 看</span> 一座 ev 桥长这样</div>
+          <p>举个例子：当后面讲到"为什么不能只报一个标量分数"时，ev 桥会援引 <span class="term">construct validity</span>（Jacobs &amp; Wallach, FAccT 2021）的 operationalization gap，或 Raji 等人（NeurIPS 2021）对"Everything in the Whole Wide World Benchmark"的批评。看到绿色的 ev 桥，就知道："这条纪律不是 EOS 拍脑袋，而是评测科学早有定论。"</p>
+        </div>
+
+        <h3 id="bridge-sm">桥三 · 从物理后端 看</h3>
+        <p>第三座桥从真实的<b>物理引擎 / 仿真</b>出发，提醒你 sim 不是真相、不同引擎也未必互相一致。它负责给抽象设计补上"物理现实"的重量。</p>
+        <div class="bridge sm">
+          <div class="c-h"><span class="tag">从物理后端 看</span> 一座 sm 桥长这样</div>
+          <p>举个例子：当后面讲到"为什么跨引擎结果会不一致"时，sm 桥会指出——接触是 non-smooth complementarity problem，各引擎为了速度与稳定各自<i>松弛</i>（线性化摩擦锥、软化互补、容忍穿透），所以同一个任务在 MuJoCo / Bullet / Genesis 上结果天然不同（参见 SimBenchmark 那类 sim2sim 研究）。看到橙色的 sm 桥，就知道："这里在提醒我别把仿真当真值。"</p>
+        </div>
+
+        <h2 id="conventions">排版约定：读懂这些标记</h2>
+        <p>正文里有几种视觉标记，含义是固定的，认熟了能加速阅读：</p>
+        <ul>
+          <li><b>术语高亮</b>：像 <span class="term">EpisodeTrace</span>、<span class="term">PhysicalStateProjection</span> 这样的英文术语 / 类名 / 命令名，我一律保留英文并高亮——这符合论文阅读习惯，也方便你回去 grep 真实代码。中文的强调则用 <span class="term-i">这种</span>。</li>
+          <li><b>代码块</b>：带文件名标头，引的都是仓库里<i>真实</i>的路径与类名，不是杜撰。</li>
+          <li><b>三类 callout</b>：<span class="term">.callout note</span> 是提示，<span class="term">.callout warn</span> 是坑或过度宣称的反面教材，而最重要的 <span class="term">.callout claim</span>（琥珀色）是 EOS 的<b>签名组件</b>——凡是讲"这一步证明了什么、还不能证明什么"，都会用它。</li>
+          <li><b>verdict chip</b>：在对比判定里你会看到这样的小标签——<span class="verdict matched">matched</span> / <span class="verdict mismatched">mismatched</span> / <span class="verdict blocked">blocked</span> / <span class="verdict neutral">neutral</span>。它们是 EOS 判定词汇的可视化，<a href="../07-hard-problems/7-3-judgeable-loop.html">7.3</a> 会讲清每个词的精确含义。</li>
+        </ul>
+
+        <div class="callout claim">
+          <div class="c-h">一条贯穿全书的标注纪律：vision vs ground truth</div>
+          <p>EOS 的文档里既有宏大的<b>愿景</b>（五条能力轴、五个 scenario pack、世界模型评测），也有此刻代码里真实跑得起来的<b>地面真相</b>（一个 SemanticProxyBackend smoke、几个 live provider、一条视觉评测 lane）。这本书会<i>始终</i>把两者分开标注：讲愿景时明说"这是路线图 / roadmap"，讲机制时引真实的文件名与类名。当你读到一个很厉害的说法，先问一句"这是 vision 还是 ground truth"——这正是 EOS 自己最在乎的纪律 <b>claim boundary</b>，我们在 <a href="../01-foundations/1-2-claim-boundary.html">1.2</a> 会把它讲透。</p>
+        </div>
+
+        <h2 id="how-to-run">怎么把这本书跑起来</h2>
+        <p>这是一本<b>交互式</b> HTML 教程，最好在本地起一个静态服务器来读（直接双击 <code>file://</code> 打开会让搜索和部件失效）：</p>
+        <div class="code" data-lang="bash"><div class="code-h"><span class="fn">learn/ 目录下</span><button class="cp">复制</button></div><pre><code>cd learn
+python3 -m http.server 8000
+# 浏览器打开 http://localhost:8000/index.html</code></pre></div>
+        <p>几个顺手的操作：按 <kbd>/</kbd> 唤出全文搜索（小节标题与术语都进了索引，↑↓ 选择、Enter 跳转、Esc 关闭）；右上角的 <span class="term">☾ / ☀</span> 切换深浅色主题；每节右栏有 "On this page" 目录与 scroll-spy，左栏的章节树和上下页都由 <span class="term">content.js</span> 自动生成——所以你会看到正文里我从不手写"下一页"链接。穿插的 <span class="term">interactive</span> 部件可以直接上手玩，每个部件全书只出现一次，出现时我会说明"玩什么、看什么"。</p>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>你已经认识了这本书的三件随身工具：（1）它默认你<b>读完了 EBench 前五章</b>，从那个"家"出发；（2）三座桥——<b>eb</b>（从 EBench 看）、<b>ev</b>（从评测科学 看）、<b>sm</b>（从物理后端 看）——会反复把新概念接回你的已知；（3）排版约定里，琥珀色的 <b>claim</b> 框最该盯紧，它和"vision vs ground truth"的标注纪律，是全书的脊梁。</p>
+        <p>序章到此结束。下一部分 <b>Part 1 · 三条铁律</b>，我们从最核心的一条思想开始：<b>证据高于能力面</b>——为什么成功调用一个后端 SDK，<i>不等于</i>评测结论成立。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

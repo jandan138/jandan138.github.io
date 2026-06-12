@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>五条能力轴与 CapabilityProfile · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="5-2">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 5 · Metrics &amp; Reports · 5-2</div>
+        <h1>五条能力轴与 CapabilityProfile</h1>
+        <p class="lede">5.1 把度量归并到 family。这一节再上一格：把 family 汇成一份给人看的<b>画像</b>。EOS 沿<b>五条能力轴</b>给具身智能打分，并把结果组织成一个结构化的 <span class="term">CapabilityProfile</span> 报告。最重要的纪律只有一句——<i>永远不给单一总分</i>。我们会再用一次能力雷达图，但换一个角度：去看为什么"会预测像素"和"对规划有用"是<b>两根独立的轴</b>。</p>
+
+        <h2 id="five-axes">五条能力轴，再看一遍</h2>
+        <p>0.1 里你已见过这五条轴。这里我们把它当作<i>报告的骨架</i>重新摆一遍，因为 CapabilityProfile 就是绕着它们组织的：</p>
+        <ol>
+          <li><b>task execution</b>——任务执行：做没做成（喂自 <code>task_outcome</code> family）。</li>
+          <li><b>world prediction</b>（WAM / world model）——世界预测：模型能否预言接下来会发生什么（喂自 <code>prediction</code> / <code>state_transition</code>）。</li>
+          <li><b>safety reasoning</b>——安全推理：预判危险、识别边界、拒绝危险动作（喂自 <code>hazard</code>）。</li>
+          <li><b>generalization</b>——泛化：换物体/场景/后端/渲染/本体还行不行。</li>
+          <li><b>planning usefulness</b>——规划有用性：世界模型<i>真能帮上</i>规划与安全决策吗（喂自 <code>planning</code>）。</li>
+        </ol>
+        <p>注意第 2 和第 5 条之间那道刻意挖开的鸿沟。一个直觉很强的误解是：世界模型预测得越准，对规划当然越有用。EOS 的设计明确<b>拒绝</b>把这两者合并——它们是两根<span class="term-i">解耦</span>的轴。</p>
+
+        <h2 id="decoupled">解耦的两根轴：预测得好 ≠ 规划有用</h2>
+        <p>为什么要分开？设想一个世界模型，它对未来 RGB 帧的预测在像素层面极其逼真——桌面纹理、光影、杯子的高光全对。可当你拿它去做规划（"如果我现在伸手去抓，会不会打翻试管？"），它给出的<i>决策相关</i>信号——接触会不会发生、试管会不会被碰倒——却是错的。反过来也成立：一个在像素上糊成一团、但能可靠回答"这个动作安不安全"的模型，在 planning usefulness 轴上可能<b>更高</b>。</p>
+        <div class="math-block">$$\text{world prediction score} \;\perp\; \text{planning usefulness score}$$</div>
+        <p>这两个分数在 EOS 里被设计成<i>近似正交</i>：world prediction 问"你预测的<b>状态/观测</b>离真值有多远"（state_transition / prediction family）；planning usefulness 问"把你的预测<b>接进一个规划/决策回路</b>后，下游的成功率或安全决策有没有变好"（planning family，例如让世界模型 <code>rank_plans</code> 后任务成功率的增益）。两者由不同的度量、不同的 trace 字段喂养，因此可以分别高、分别低。</p>
+
+        <div class="lab">
+          <div class="lab-h"><span class="lab-tag">interactive</span><span class="lab-t">同一个世界模型：像素轴很高，规划轴塌陷</span></div>
+          <div class="lab-body" data-widget="capability-radar"></div>
+          <div class="lab-cap">这次别只看"哪个模型总分高"。盯住 <b>world prediction</b> 和 <b>planning usefulness</b> 两根轴：一个 world model 可以在前者很长、在后者很短——会"画"未来，却帮不了决策。单一总分会把这道致命缝隙抹平。数值为示意。</div>
+        </div>
+
+        <div class="bridge ev">
+          <div class="c-h"><span class="tag">从评测科学 看</span> 世界模型该按"对规划有用"评，不是按像素保真</div>
+          <p>这正是 <span class="term">VP²</span>（Tian, Finn, Wu, ICLR 2023）的核心发现："perceptual video metrics can be unreliable at predicting execution success"——感知层面的视频指标（PSNR、SSIM、FVD 这类像素保真度）和"这个预测能不能支撑控制成功"之间相关性很弱。<span class="term">DreamerV3</span>（Nature 640:647–653, 2025）则反向印证同一点：它在极多样的控制<i>任务</i>上靠学到的 world model 做规划取得成功，证明 world model 的价值在"能不能拿来做决策"，而非"重建得多像"。EOS 把这条认识硬编码进了报告结构——world prediction 与 planning usefulness 是两根不能互相替代的轴。</p>
+        </div>
+
+        <h2 id="capability-profile">CapabilityProfile：多轴分解，而非一个数</h2>
+        <p>这五条<i>能力轴</i>是面向叙事的高层维度；落到具体报告类型 <span class="term">CapabilityProfile</span> 时，它会被进一步<b>细分</b>成更多可独立读出的子维度——这样每一面都能被单独审计：</p>
+        <div class="code" data-lang="json"><div class="code-h"><span class="fn">CapabilityProfile（多轴分解，示意结构）</span><button class="cp">复制</button></div><pre><code>{
+  "task_outcome":         { "value": 0.61, "n": 100, "status": "exact" },
+  "procedure_validity":   { "value": 0.74, "n": 100, "status": "exact" },
+  "precision":            { "value": "1.8 ul", "status": "approximate" },
+  "hazard_safety":        { "ddr": 0.55, "fnr_h": 0.21, "status": "exact" },
+  "prediction":           { "ste": 0.12, "status": "exact" },
+  "planning_usefulness":  { "value": null, "status": "blocked_missing_artifact" },
+  "generalization":       { "render_split": 0.48, "physics_split": null },
+  "resource_cost":        { "steps": 84, "wall_s": 31.2 }
+}</code></pre></div>
+        <p>三件事请你在这个结构里看出来。其一，<b>每根轴自带分母与状态</b>（<code>n</code>、<code>status</code>）——一个轴可以是 <code>exact</code> / <code>approximate</code>，也可以诚实地是 <code>blocked_missing_artifact</code>（这里 planning usefulness 因为缺规划产物而被 block，<b>不填 0</b>，呼应铁律三）。其二，<code>generalization</code> 被进一步拆成 <code>render_split</code> 与 <code>physics_split</code>——换渲染器的泛化和换物理引擎的泛化是不同的事（这道区分在 <a href="5-4-metric-boundaries.html">5.4</a> 会被反复强调）。其三，没有任何一个字段叫 <code>overall_score</code>。</p>
+
+        <h2 id="no-scalar">"没有单一标量"是一条规则</h2>
+        <p>这不是 EOS 忘了加总分，而是它<b>明令禁止</b>加。把多轴塌成一个数，等于宣布"我知道这五条轴该怎么加权"——而这个权重恰恰是<i>价值判断</i>，不是测量结果。一个长于 task execution、却在 safety reasoning 上漏报危险的模型，和一个反过来的模型，凭什么用同一个加权和比较？任何固定权重都会偷偷把某一类失败定价为"可接受"。</p>
+        <div class="callout claim">
+          <div class="c-h">这份报告证明了什么 / 没证明什么</div>
+          <p>一份 CapabilityProfile <b>证明</b>的是：在它列出的<i>每一根轴</i>上、在它写明的<i>分母与状态</i>下，模型取得了这些可审计的结果。它<b>不</b>提供、也<b>不许</b>被读成一个"综合能力分"。"模型 A 比模型 B 强"这种 model superiority 论断，没有任何单一标量能支撑——它必须被还原成"在哪根轴、哪个 split、什么分母下，A 高于 B"。这正是 <span class="term">standard_model_score</span> 默认为 <code>null</code> 的原因（见 <a href="5-3-model-families.html">5.3</a>）：宁可留空，也不给一个会被误读成总分的数。</p>
+        </div>
+
+        <div class="bridge ev">
+          <div class="c-h"><span class="tag">从评测科学 看</span> 多轴画像胜过单一标量，早有先例</div>
+          <p>"别用一个数概括一个能力体系"在评测科学里是反复被验证的教训。<span class="term">HELM</span>（Liang et al., 2022）把语言模型评测从"一个 leaderboard 分"重构成一张 scenarios × metrics 的多维矩阵，明确主张<i>holistic</i> 评测。机器人领域的 <span class="term">BEHAVIOR / BEHAVIOR-1K</span>（CoRL 2022 / 2023）同样沿多个能力维度铺开长程家务任务，而非一个成功率。<span class="term">Dynabench</span>（Kiela et al., NAACL 2021）则从另一面论证：静态的单一基准会被"刷分"，需要多维、动态的视角。EOS 的五条轴 + CapabilityProfile，是把这条共识搬到具身智能上的一次具体落地。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>三点：（1）EOS 沿<b>五条能力轴</b>（task execution / world prediction / safety reasoning / generalization / planning usefulness）组织一份结构化的 <span class="term">CapabilityProfile</span> 报告，每根轴自带分母与状态、可被 block；（2）<b>world prediction 与 planning usefulness 是解耦的两根轴</b>——会预测像素不等于对规划有用，这条认识直接来自 VP² 与 DreamerV3；（3）"没有单一标量"是一条<i>规则</i>而非疏忽——任何总分都隐含一个不该由测量做出的价值加权。</p>
+        <p>下一节，我们把镜头转向被评测的对象本身：模型有哪些<b>家族</b>，<span class="term">ModelAdapter</span> 暴露哪些方法，以及 standard / privileged / oracle 三种可见性模式如何决定一个分数算不算数。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

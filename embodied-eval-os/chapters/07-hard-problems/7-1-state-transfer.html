@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>跨引擎状态迁移：qpos 拷贝的坑 · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="7-1">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 7 · The Hard Problems · 7-1</div>
+        <h1>跨引擎状态迁移：qpos 拷贝的坑</h1>
+        <p class="lede">这一 Part 不再讲架构应该长成什么样，而讲它<i>怎么被打疼的</i>。每一节背后都有一场真实的工程战役，记录在 <span class="term">docs/records/</span> 里。第一仗，是一个安静到几乎没人察觉的 bug：一段 <span class="term">qpos</span> 向量，被<b>按数值下标</b>从一个引擎拷到另一个引擎——两边的关节排布根本不一样。机器人没报错，只是手指穿进了试管壁里。</p>
+
+        <h2 id="the-bug">stage50：一段向量，两套关节</h2>
+        <p>故事发生在 Genesis-owned 执行那条线上（records 2026-06-01~03）。当时的目标朴素得很：拿一个在 <span class="term">MuJoCo</span> 里已经摆好的初始状态——机器人手臂的关节角、试管在 rack 里的位姿——原样搬到 <span class="term">Genesis</span> 里去，让两个引擎从<i>同一个起点</i>出发。最直接的写法，就是把 MuJoCo 的 <span class="term">qpos</span> 数组整段读出来，再整段写进 Genesis。一行 numpy 切片的事。</p>
+        <p>它跑通了。没有异常，没有断言失败，trace 也照样产出。直到有人去看渲染：Genesis 里的夹爪手指<b>穿过了</b>试管帽，试管整个嵌进了 rack 槽位的几何体里——interpenetration 与 clipping，肉眼可见的物理崩坏，却没有任何一行日志提到它。这就是 <span class="term">stage50</span> bug：一个 <span class="term-i">silent</span> 的错误。</p>
+        <p>原因一旦说破就很蠢，但正因为蠢才危险：MuJoCo 的 qpos 第 7 个分量，可能是某个手腕关节；Genesis 的 qpos 第 7 个分量，可能是夹爪开合。两个引擎在内部按各自的顺序排列自由度——关节、body、contact 的<i>排序</i>从来没有被约定要一致。<b>按下标对齐，等于把"手腕角度"写进了"夹爪开合"。</b>数字全都"成功"地落了位，语义却全错了。</p>
+
+        <div class="bridge sm">
+          <div class="c-h"><span class="tag">从物理后端 看</span> 同下标 ≠ 同自由度</div>
+          <p>不同引擎对 DoF / body / contact 的排序，是各自的实现细节，没有跨引擎契约。MetaSim 的 <span class="term">TensorState</span> 之所以要把 DoF 按 <i>lexicographical order</i> 重排，正是因为"裸下标"不可携带（我们在 <a href="../03-trace-state/3-4-tensorstate.html">3.4</a> 拆过这个陷阱）。更深的层面：跨引擎本来就难对齐——接触是一个 non-smooth complementarity problem，各引擎为了速度与稳定<i>各自松弛</i>（线性化摩擦锥、软化互补、允许穿透）。<span class="term">SimBenchmark</span> 测 RaiSim / Bullet / ODE / MuJoCo / DART，发现引擎表现高度 task-dependent；cloth manipulation benchmark 里，dynamic 工况下<b>没有任何一对引擎精确匹配</b>。在这种现实下，"把一段向量按位置拷过去就当作同一个状态"，是一个<b>范畴错误</b>（category error），不是一个数值精度问题。</p>
+        </div>
+
+        <h2 id="the-fix">修法：按名字重映射，缺了就 hard-fail</h2>
+        <p>修复的思路很直接：<b>不按下标，按关节名字（joint name）重映射。</b>源引擎里的 <code>wrist_2_joint</code> 必须落到目标引擎里那个同样叫 <code>wrist_2_joint</code> 的自由度上，而不是落到"恰好排第几位"的那个。更关键的是第二条：如果目标引擎里<i>找不到</i>某个关节，或者两边的向量宽度对不上，<b>立即 hard-fail</b>，而不是悄悄截断、补零、或跳过。</p>
+        <p>这条"宁可炸、不要静默"的纪律，正是 <a href="../01-foundations/1-3-no-silent-fallback.html">1.3</a> 讲的 No Silent Fallback Policy 在状态迁移上的具体化身：缺了关节，是一个显式的 <span class="term">blocked_missing_state</span>，不是一次"看起来成功"的迁移。下面这个部件，让你亲手对比这两种拷贝。</p>
+
+        <div class="lab">
+          <div class="lab-h"><span class="lab-tag">interactive</span><span class="lab-t">stage50：按 index 拷贝 vs 按 joint name 重映射</span></div>
+          <div class="lab-body" data-widget="qpos-remap"></div>
+          <div class="lab-cap">切换两种迁移方式。按 index 拷贝时数字"全部就位"却物理崩坏；按 joint name 重映射时，对不上的关节会被标成 blocker 而不是被悄悄吞掉。</div>
+        </div>
+
+        <h2 id="lift-into-core">升华进 core：generic-state-transfer-contract</h2>
+        <p>一个 bug 被修好还不算完。EOS 的习惯是问：这个教训能不能变成一条<b>谁都绕不过去的契约</b>？于是它被升华进了 core 的 <span class="term">generic-state-transfer-contract</span>。注意这里的纪律——契约必须是 <i>domain-agnostic</i> 的：core 不知道"试管""rack"，它只知道抽象的状态分量与映射条目。</p>
+        <p>契约引入了两个结构：<span class="term">StateComponentSpec</span> 描述"一个状态分量是什么"（它的语义身份、它在某个后端里的布局），<span class="term">StateTransferMapEntry</span> 描述"源的哪个分量映射到目标的哪个分量"。有了它们，状态迁移就从"拷一段数字"变成"按显式映射搬运被命名的分量"。而最重要的一条判决写进了规则里：</p>
+
+        <div class="callout claim">
+          <div class="c-h">这条契约证明了什么、拒绝了什么</div>
+          <p>generic-state-transfer-contract 让一次跨引擎迁移<b>可审计</b>：每个被搬运的分量都有语义身份与映射来源，缺失与宽度不符都是显式 blocker。它<b>不</b>证明两个引擎物理等价，也<b>不</b>证明迁移后轨迹会重合——它只保证"我们搬的是同一个被命名的东西"。它最强硬的一条是：<b>一段没有布局身份（layout identity）的裸向量，本身就是一个 structured blocker。</b>换句话说，光给一段 qpos 数字、不给"每个分量是哪个关节"的布局，在 EOS 里不构成可迁移的状态——它会被当作缺证据，而不是当作成功。</p>
+        </div>
+
+        <p>这条"裸向量即 blocker"的规则，和 <a href="../03-trace-state/3-4-tensorstate.html">3.4</a> 里"为什么不用裸 TensorState"是同一种世界观的两面：同一个 shape、同一段数字，并不能证明两边有相同的 component inventory、相同的 joint-body-actuator-contact 排序、可比的 frame / unit / sign / force family。stage50 不是个例，它是这个世界观被一次惨痛的渲染画面验证了。</p>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>三点：（1）<span class="term">stage50</span> bug 的本质是<b>按数值位置</b>跨引擎拷贝 qpos，在关节排布不同的两个后端间制造了静默的 interpenetration——这是范畴错误，不是精度问题；（2）修法是<b>按 joint name 重映射 + 缺关节/宽度不符就 hard-fail</b>，让迁移失败变成显式 blocker；（3）教训被升华进 core 的 <span class="term">generic-state-transfer-contract</span>（<span class="term">StateComponentSpec</span> / <span class="term">StateTransferMapEntry</span>），并立下"<b>裸向量无布局身份 = structured blocker</b>"的硬规则。</p>
+        <p>但"从同一个起点出发"只是序章。下一节我们走进 WorldState Runtime 那场大战役——当两个引擎确实从同一状态启动后，真正的问题变成了：它们会在<i>何时何处</i>第一次分叉？</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

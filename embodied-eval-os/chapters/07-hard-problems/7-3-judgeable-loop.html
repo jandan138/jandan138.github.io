@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Judgeable loop：把分叉记成账 · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="7-3">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 7 · The Hard Problems · 7-3</div>
+        <h1>Judgeable loop：把分叉记成账</h1>
+        <p class="lede">上一节我们能<i>看见</i>两个引擎在哪一步分叉了。但"看见差异"和"敢用差异下结论"之间，隔着一道很深的鸿沟。如果你都没确认两边跑的是<b>同一个起点、同一套动作、控制真被接受、关节真有响应</b>，那么任何"它们不一样"的判断都可能只是你自己测错了。R1 到 R15 这场取证式（forensic）的拉锯，就是去把这道鸿沟一寸寸填平。</p>
+
+        <h2 id="what-is-judgeable">"judgeable"是什么意思</h2>
+        <p>judgeable loop 的核心洞见，是把比较拆成<b>两层</b>：先过 <span class="term">fairness gates</span>（公平性闸门），再下 physical verdict（物理判决）。fairness gates 问的是"这场比较公不公平"，它们必须先<b>全部通过</b>，物理判决才被允许成立。这些闸门包括：</p>
+        <ul>
+          <li>两边是否同一个 <span class="term">state0 hash</span>（起始状态逐位相同）；</li>
+          <li>是否同一套 <span class="term">action schedule</span>（重放同一条动作序列）；</li>
+          <li>控制是否被 <span class="term-i">ack</span>（control acknowledgement，命令真的被接受了）；</li>
+          <li>关节是否真有 <span class="term-i">response</span>（joint response，动了，不是发了指令却没动）。</li>
+        </ul>
+        <p>只有这些闸门都绿了，"两个引擎的接触力不一样"才是一个关于<i>物理</i>的结论，而不是一个关于<i>我装置没搭对</i>的结论。物理判决本身用一套受控词汇表达：</p>
+        <p>
+          <span class="verdict matched">matched</span>
+          <span class="verdict mismatched">mismatched</span>
+          <span class="verdict blocked">blocked_with_evidence</span>
+          <span class="verdict neutral">not_compared</span>
+        </p>
+        <p>注意 <span class="verdict blocked">blocked_with_evidence</span> 与 <span class="verdict neutral">not_compared</span> 的存在——它们让"我没法比"和"我比了、一样/不一样"被明确区分开，而不是把无法比较的东西硬塞进 matched 或 mismatched。这是 No Silent Fallback 在判决层的化身：缺证据就如实记缺证据。</p>
+
+        <div class="bridge ev">
+          <div class="c-h"><span class="tag">从评测科学 看</span> 这就是 construct validity 在跑</div>
+          <p>fairness gates 不是工程洁癖，它是 <span class="term">construct validity</span>（Jacobs &amp; Wallach, FAccT 2021）落到比较层的样子：你声称在测"两个引擎的物理差异"，可如果起点 hash 不同、动作没对齐、控制没被接受，你实测的其实是"我的装配误差"，而不是你声称的那个构念。Henderson 等人（"Deep RL that Matters", AAAI 2018）早就警告过：不控住 extrinsic / intrinsic 变异，RL 的对比结论会变得不可复现。<b>judgeable loop 把"公平"做成了下结论前的硬前置——先证明比较成立，再相信比较结果。</b></p>
+        </div>
+
+        <h2 id="r13-force-law">R13：七个作动器的力律项相等</h2>
+        <p>这场取证里最漂亮的一仗是 R13。控制链是否"公平"，不能只看"动作重放了"，还要看两边的<b>力律（force law）</b>是不是同一回事。对常见的 position actuator，单步施加的力可以写成一个仿射形式：</p>
+        <div class="math-block">$$ \text{force} = \text{gain}\cdot\text{target} + \text{bias}_0 + \text{bias}_1\cdot q_{pos} + \text{bias}_2\cdot q_{vel} $$</div>
+        <p>R13 做的事，是对 <b>7 个公共 actuator</b> 逐项比对这些系数（gain、三个 bias 项），结果是每一项的 delta 都是 <code>0.0</code>：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">R13 → R15 report 摘录</span><button class="cp">复制</button></div><pre><code>control_force_term_delta_max          = 0.0
+common_actuator_force_term_matched_count = 7</code></pre></div>
+        <p>这是一个极强、极窄的 verdict：控制链在力律项级别上 <span class="verdict matched">matched</span>。它<i>不</i>说轨迹一样，<i>不</i>说接触力一样——它只说"喂给两个引擎的力，是按同一条公式、同样系数算出来的"。这种<b>把比较切到最细的可证粒度</b>，正是 judgeable loop 的精髓：把一个模糊的"控制公平吗"，拆成一个可以打 0.0 的具体账目。</p>
+
+        <h2 id="r15-closure">R15：把未知 blocker 变成已声明的 non-equivalence</h2>
+        <p>到 R14 时，账面上还挂着几个"blocker"——它们被列为<i>未知</i>的拦路项，比如手指接触力的 norm 不匹配、力向量基底未对齐、source 侧的 <code>qacc_warmstart</code> 在 Genesis 侧无对应物。R15 问了一个收尾问题：这些到底是<b>未知的坑</b>，还是<b>有证据支撑、可以显式带着走</b>的 non-equivalence？</p>
+        <p>R15 的判决是后者。它把每一条剩余差异都归类为"accounted"（已记账），最终关闭为：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">docs/records/2026-06-10-cross-engine-pickup-judgeable-loop-r15.md</span><button class="cp">复制</button></div><pre><code>fair_accounting_closure_status = closed_with_accounted_non_equivalences
+unaccounted_blocking_reasons   = []
+remaining_blocking_reasons     = []
+
+robot_joint_response      = accounted_trajectory_mismatch
+joint_control_chain       = accounted_matched_force_terms
+finger_contact_force      = accounted_norm_only_mismatch
+contact_force_vector_basis= accounted_not_equated
+solver_warmstart          = accounted_declared_non_equivalence</code></pre></div>
+        <p>读一遍这张表就懂了它的美学：机器人关节响应是一个<i>被测到的</i>轨迹 mismatch（first divergence 在第 7 步，max abs delta ≈ 0.073）；控制链是 <span class="verdict matched">matched</span> 的力律项；手指接触力在 norm 层 mismatch、向量基底 <span class="verdict neutral">not_equated</span>；<code>qacc_warmstart</code> 因 Genesis 侧无绑定，被声明为一个 <i>declared non-equivalence</i>。关键在 <code>unaccounted_blocking_reasons=[]</code>——<b>每一处剩余的不一致，都从"未知 blocker"变成了"有证据背书、显式声明的 non-equivalence"</b>。没有一个差异是悄悄藏起来的，也没有一个是含糊不清的。</p>
+
+        <div class="callout claim">
+          <div class="c-h">R15 关闭了什么、绝不声称什么</div>
+          <p>R15 关闭的是<b>账本</b>，不是 parity。它证明：在公平闸门全绿的前提下，两个引擎的每一处差异都已被归类、被证据支撑、可被审计带向未来。它<b>明确不</b>声称：backend parity、force-vector parity、contact parity、robot dynamics parity、trajectory parity、task success、官方 benchmark 复现、模型能力、hardware readiness、real-world safety。用记录里的原话：<i>"It does not make MuJoCo and Genesis physically equivalent."</i> 把"一致"与"已记账的不一致"分得清清楚楚，本身就是结论——而不是退而求其次。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>三点：（1）judgeable loop 把比较拆成两层——<b>fairness gates</b>（同 state0 hash、同 action schedule、control ack、joint response）<b>先过</b>，physical verdict（<span class="verdict matched">matched</span> / <span class="verdict mismatched">mismatched</span> / <span class="verdict blocked">blocked_with_evidence</span> / <span class="verdict neutral">not_compared</span>）才被允许；（2）R13 在 <b>7 个 actuator</b> 上逐项验证力律 <span class="math-inline">$\text{force}=\text{gain}\cdot\text{target}+\text{bias}_0+\text{bias}_1 q_{pos}+\text{bias}_2 q_{vel}$</span>，delta 全 <code>0.0</code>；（3）R15 关闭为 <span class="term">closed_with_accounted_non_equivalences</span>、<code>unaccounted_blocking_reasons=[]</code>——把每个未知 blocker 变成已声明的 non-equivalence，<b>parity 依旧不声称</b>。</p>
+        <p>账记清了，差异有据了。但还有一个更刺人的问题悬在整条线索之上：这一切，到底算不算"faithful reproduction"？下一节，是这本书的良心时刻。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

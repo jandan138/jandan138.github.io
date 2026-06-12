@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WorldState Runtime：从同起点到首次分叉 · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="7-2">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 7 · The Hard Problems · 7-2</div>
+        <h1>WorldState Runtime：从同起点到首次分叉</h1>
+        <p class="lede">上一节修好了"从同一个起点出发"。但有人盯着两段 pickup 视频反复看：MuJoCo 里试管被稳稳拎起，Genesis 里它滑脱了。一开始大家以为这是个 bug。后来才意识到——这不是 bug，是<b>地基没打</b>的症状。WorldState Runtime（<span class="term">WR</span>）这场长达八个里程碑的战役，就是去打那块地基。</p>
+
+        <h2 id="symptom-not-cause">视频不一致只是症状</h2>
+        <p>WR 的开端是一个诱人的陷阱：既然 AutoBio 的 pickup 任务在两个引擎里表现不同，那就去"修好"它，让 Genesis 也能拎起试管。但项目做了一个反直觉、却决定全局走向的判断——<b>pickup 视频不一致，是一个"缺地基"的症状，而不是一个待修的任务 bug</b>。真正缺的，是一套能让任意两个后端"被测量、被投影、被比较、被审计"的运行时底座。</p>
+        <p>于是发生了这场战役里最重要的一次身份调整：<b>AutoBio 任务从"架构拥有者"被降级为"regression scenario"</b>。它不再是组织架构的那根主轴；架构的主轴换成了通用的 WorldState Runtime Foundation（WR-0…WR-6），AutoBio pickup 只在最后作为一条回归场景挂上去。"别让一个 benchmark 反过来定义你的 OS"这条铁律，在这里第一次以血的代价被执行。</p>
+
+        <h2 id="three-axes">L2/L3 清算：三轴解耦</h2>
+        <p>地基要打好，先得把混在一起的概念拆开。2026-06-05 的 <span class="term">l2-l3-layering-clarification</span> 记录直指当时反复纠缠的三个问题：L2 要不要用 live USD stage 当世界的主表示？Genesis 要不要每一步把内部状态镜像进 USD？要不要推倒重做 L2？记录的回答是：这些混乱，都来自把三件<i>正交</i>的事搅在了一起。</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">docs/records/2026-06-05-l2-l3-layering-clarification.md</span><button class="cp">复制</button></div><pre><code>layer ownership      (L0-L6)
+interchange format   (USD / MJCF / solver decks)
+runtime truth        (MuJoCo / Genesis / PhysX / real robot / CAE internals)</code></pre></div>
+        <p>把它们分开后，规则就清晰了：<span class="term">L2 WorldSession</span> 是 <i>session envelope</i>（信封），不是世界存储——它记录哪个 backend profile 在跑、生命周期、时钟、端口、topology 的<b>引用</b>，但<b>不</b>拥有 per-step 物理真相。per-step 的 pose、qpos、contacts、solver coverage，属于 <span class="term">L3 RuntimeMeasurementSnapshot</span>，由 <code>measure()</code> 在 reset / event 边界产出。跨后端比较用 L3（或 L3→L4 投影），<b>而不是看磁盘上某个 <code>.usda</code> 文件有没有变</b>。这条记录里那句北极星，值得抄下来：</p>
+        <div class="callout note">
+          <div class="c-h">北极星</div>
+          <p style="margin:0;font-style:italic">"Under the same task and evidence rules, different physics backends produce results that can be measured, projected, compared, and audited without overclaiming."</p>
+        </div>
+
+        <h2 id="wr7-turning-point">WR-7 转折：从"同起点"到"首次分叉"</h2>
+        <p>地基铺好后，WR-7 带来了整场战役的认知转折。在此之前，问题被框成"两个引擎能不能从<i>同一个起始状态</i>出发"——这是一个关于 reset 的静态问题。WR-7 把它<b>重新提问</b>了：与其纠结"起点能不能对齐"，不如问——<b>两个引擎沿时间推进，<i>在哪一步</i>第一次分叉？</b></p>
+        <p>这个提问的转变，把评测对象从"一张快照"换成了一条 <span class="term">paired dynamic trace</span>：让两个引擎重放<i>同一条动作序列</i>，沿若干条轴同步采样，找出每条轴的 <span class="term-i">first-divergence step</span>。这些轴不是随便选的，而是覆盖了从控制输入到任务语义的整条因果链：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">paired dynamic trace · 分叉轴</span><button class="cp">复制</button></div><pre><code>robot_action_replay        重放的动作是否对齐
+tube_lift                  试管是否被抬起
+finger_cap_contact         手指与试管帽是否接触
+tube_cap_body_retention    帽/管是否保持在一起
+contact_force              接触力
+task_phase_semantics       任务阶段语义</code></pre></div>
+        <p>把这些轴对齐到同一时间轴上，"哪个引擎更对"这种含糊问题，就被替换成可记账的"<b>在第几步、哪条轴上，两者第一次不一致</b>"。WR-7D 那个里程碑的 <code>gate_status=failed</code>，恰恰是这套方法<i>有用</i>的证据——它是一次成功的<b>诊断</b>，而不是一次 parity 声称。下面这个部件，让你拖动时间轴亲眼看分叉点逐条轴亮起。</p>
+
+        <div class="bridge sm">
+          <div class="c-h"><span class="tag">从物理后端 看</span> 分叉不是 bug，是引擎的本性</div>
+          <p>两个引擎从同一起点喂同一条动作，为什么<i>必然</i>会分叉？因为接触动力学本质是一个非线性互补问题（NCP），而每个引擎为了速度和稳定，<b>各自做了不同的松弛</b>：把摩擦锥线性化（→ LCP，摩擦力方向与真实速度错开）、或软化互补条件（→ 引入非物理穿透）。<span class="term">SimBenchmark</span>（RaiSim/Bullet/ODE/MuJoCo/DART）实测到各引擎的位置漂移表现是<i>任务相关</i>的；布料 sim-to-real 基准里，准静态任务大家都低误差，<b>动态任务却没有任何引擎精确匹配</b>。所以 WR-7 测到的"首次分叉"不是哪个引擎写错了——它在<b>测量两套求解器近似之间真实存在的鸿沟</b>。EOS 能做的，只是把这条鸿沟<i>测准、记清</i>，而不是假装它不存在。</p>
+        </div>
+
+
+        <div class="lab">
+          <div class="lab-h"><span class="lab-tag">interactive</span><span class="lab-t">paired dynamic trace：拖时间轴找 first divergence</span></div>
+          <div class="lab-body" data-widget="divergence-trace"></div>
+          <div class="lab-cap">拖动时间轴。每条轴在它的 first-divergence step 之前是 matched，之后翻成 mismatched——比较的产物是"何处分叉"，不是一个总分。</div>
+        </div>
+
+        <h2 id="two-lanes">两条 Genesis 车道：raw vs primitive-assisted</h2>
+        <p>WR 还逼出一个诚实的细分。Genesis 在"裸物理"下（raw lane）拎不起试管；但如果允许 pack 用一个 <span class="term">ProcessPrimitive</span> 去辅助保持（primitive-assisted lane），上层任务语义就能成立。于是 Genesis 被拆成两条<b>车道</b>，分别记账——绝不把"辅助车道成立"偷换成"裸物理成立"。</p>
+        <p>WR-8H 关闭的，正是一个<b>车道范围（lane-scoped）</b>的 L3 任务语义 outcome：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">WR-8H · lane-scoped outcome</span><button class="cp">复制</button></div><pre><code>primitive_assisted_genesis_l3_task_semantic_outcome = true
+raw_genesis_lane_task_success                       = false</code></pre></div>
+        <p>注意视频在这里的地位：它<b>只作为 visual support</b>，是辅助性的视觉佐证，而不是判定 outcome 的证据本身。判定靠的是 L3 测量与逐轴账本，视频只是让人类看得见。</p>
+
+        <div class="callout claim">
+          <div class="c-h">WR 阶段诚实收尾：能说什么、不能说什么</div>
+          <p><b>能说</b>：在同一任务与同一证据规则下，两个引擎在哪些轴一致、在哪一步分叉；primitive-assisted 车道支撑了某个上层任务语义 outcome。<b>不能说</b>：Genesis 的 native physics 复现了 MuJoCo 的 pickup physics。一个 assisted-lane 的 L3 outcome 成立，<i>不等于</i>裸引擎物理等价；视频好看，<i>不等于</i> trajectory parity 或 contact-force parity。这正是 <a href="../00-orientation/0-1-why-eos.html">0.1</a> 立下的 claim boundary 纪律，在一场真实战役里被一字一句地守住。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>三点：（1）pickup 视频不一致是<b>缺地基</b>的症状，导致 AutoBio 任务从架构拥有者<b>降级为 regression scenario</b>；（2）L2/L3 清算用<b>三轴解耦</b>（layer ownership / interchange format / runtime truth）把混乱拆开，L2 是 session envelope、L3 才是跨后端证据；（3）WR-7 把问题从"同起点"转向"<b>首次分叉</b>"，用 paired dynamic trace 逐轴记账，并以 raw / primitive-assisted 两条车道诚实区分——assisted lane 成立<b>不等于</b> Genesis native physics 复现了 MuJoCo pickup。</p>
+        <p>但"在哪一步分叉"只是把差异<i>看见</i>了。下一节，我们看 judgeable loop 如何把每一处分叉变成一笔<b>有据可查、不留未知 blocker</b>的账。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

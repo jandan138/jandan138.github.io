@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>两条评测路径：EpisodeRunner vs provider loop · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="6-1">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 6 · Runtime · 6-1</div>
+        <h1>两条评测路径：EpisodeRunner vs provider loop</h1>
+        <p class="lede">到现在为止，你已经知道一条 <span class="term">EpisodeTrace</span> 长什么样、它为什么是证据、状态怎样分三层归一化。但 trace 不会凭空出现——总得有<i>什么东西</i>真的把后端拉起来、把动作喂进去、把测量抓出来，最后把这一切缝成一条 trace。这一节就来看 EOS 用来"产出 trace"的两条路径：一条朴素得几乎像玩具，一条是当前前沿的 live 证据链。理解它们为什么<b>共用同一套状态契约、却走两条代码路</b>，是读懂整个 runtime 层的钥匙。</p>
+
+        <h2 id="why-two">为什么会有两条路</h2>
+        <p>一个评测 OS 面对两类截然不同的需求。第一类：我只想<i>快速</i>把"后端 + 模型 + 任务"拼起来跑一遍，证明这条管线在 Python 进程内能闭合、能吐出一条结构正确的 trace。它不碰真实仿真器的 SDK，不要求毫秒级保真，只要求<b>结构与证据契约</b>是对的。第二类：我要把一个真实的物理后端（MuJoCo、PyBullet、Genesis）当作 <span class="term">provider</span> 拉起来，让模型在<i>脱敏后</i>的观测上做决策，把每一步的产物都做成 hash 寻址的证据，最后判定"这一步证明了什么"。</p>
+        <p>这两类需求若塞进同一段代码，必然互相拖累——前者会被后者的 artifact 机制压垮，后者会被前者的简化假设污染。EOS 的选择是<b>两条路径、一套契约</b>：无论走哪条，最终都落到 <span class="term">EpisodeTrace</span> / <span class="term">PhysicalStateProjection</span> / <span class="term">TaskSemanticState</span> 这三个 core 概念上。路径可以换，证据的形状不能换。</p>
+
+        <div class="bridge eb">
+          <div class="c-h"><span class="tag">从 EBench 看</span> 一个 client–server loop 裂成了两条</div>
+          <p>在 EBench 里你只见过<i>一种</i>评测循环：client 连上 GenManip server，<span class="term">reset</span> → <span class="term">step</span> → <span class="term">close</span>，仿真器是个黑盒，模型隔着进程边界喂动作。那套循环非常具体——焊死在 Isaac 4.1、Lift2 本体、固定的 camera 名上。EOS 把这条 loop 的<i>意图</i>抽出来，一分为二：一条退化成进程内的 <span class="term">EpisodeRunner</span>（连黑盒都省了），一条升格成通用的 provider 证据链（黑盒变成可换的物理后端）。EBench 那条 loop，现在只是后者的一个特例。</p>
+        </div>
+
+        <h2 id="path-a">路径 A：进程内的 EpisodeRunner</h2>
+        <p>路径 A 的全部实现就在 <span class="term">core/runtime/episode_runner.py</span> 里，短到可以一口气读完。它是一个 <span class="term">@dataclass</span>，把四样东西拼在一起，再加一个步数上限：</p>
+
+        <div class="code" data-lang="python"><div class="code-h"><span class="fn">src/embodied_eval_os/core/runtime/episode_runner.py</span><button class="cp">复制</button></div><pre><code>@dataclass
+class EpisodeRunner:
+    backend: EpisodeBackend
+    model: EpisodeModel
+    task_spec: TaskSpec
+    scene_spec: SceneSpec
+    max_steps: int = 100
+
+    def run(self, seed: int | None = None) -> EpisodeTrace:
+        ...</code></pre></div>
+
+        <p>关键在于 <code>backend</code> 和 <code>model</code> 都不是具体类，而是 <span class="term">Protocol</span>——结构化的鸭子类型契约。<span class="term">EpisodeBackend</span> 只要求实现 <code>load_scene / reset / step / measure / project_physical_state</code>；<span class="term">EpisodeModel</span> 只要求 <code>reset / act</code>。任何满足这两个协议形状的对象，都能插进 runner。这就是"后端可换、模型可换"在最朴素层面的兑现：runner 自己对 MuJoCo、对随机策略、对任何东西<i>一无所知</i>。</p>
+        <p><code>run(seed)</code> 的流程是教科书式的：<code>load_scene</code> → <code>reset</code> → 循环里 <code>model.act(obs)</code> → <code>backend.step(action)</code> → <code>measure()</code> → <code>project_physical_state()</code>，每步组一个 <span class="term">TraceStep</span> 追加进 trace，直到 <code>terminated/truncated</code> 或步数耗尽。注意它<b>没有</b>填充 <span class="term">TaskSemanticState</span> 的语义字段（路径 A 留空一个空壳），因为场景语义是 pack 的事，不是这个通用 runner 的事。</p>
+
+        <h2 id="forced-evidence">被强制写进每条 trace 的东西</h2>
+        <p>路径 A 虽然朴素，却已经在执行 EOS 的两条铁律。第一，它把后端拆成六个组件强制记进 trace——这个常量就摆在文件顶部：</p>
+
+        <div class="code" data-lang="python"><div class="code-h"><span class="fn">src/embodied_eval_os/core/runtime/episode_runner.py</span><button class="cp">复制</button></div><pre><code>STANDARD_BACKEND_COMPONENTS = (
+    "platform", "physics", "renderer", "sensors", "control", "process_runtime",
+)</code></pre></div>
+
+        <p>哪怕你只给了一个 backend id，<code>_backend_components()</code> 也会先把这六个键铺成 <code>None</code>，再用后端显式声明的部分覆盖。换句话说，runner 在结构上<b>拒绝</b>"这个后端就是 MuJoCo"这种单字符串身份——六个槽位永远在那里提醒你：platform、physics、renderer 是三件不同的事。</p>
+        <p>第二，它记录 provenance。<code>_current_repo_commit()</code> 用 <code>git -C &lt;repo_root&gt;</code> 取<b>所属仓库</b>的 HEAD，而且<i>刻意忽略</i>当前工作目录——有一条测试专门守着这一点。为什么这么较真？因为 trace 的 versions 里那个 <code>repo_commit</code> 必须指向"产出这条 trace 的那份代码"，而不是"恰好运行命令时所在的目录"。没有可信的 commit，trace 就不是有效证据。同样默认写入的还有那句 <code>claim_boundary="Trace evidence only; no simulator fidelity or real-world safety claim."</code>——朴素归朴素，边界声明一个字都不能少。</p>
+
+        <p>这条路谁在走？<span class="term">examples/run_smoke.py</span> 就是它的标准用法：用一个 <span class="term">SemanticProxyBackend</span> 配 <span class="term">RandomPolicyAdapter(delta=0.4)</span>，<code>max_steps=10</code>，<code>run(seed=42)</code>，再交给 <span class="term">TaskOutcomeEvaluator().evaluate_episode(trace)</span>，需要时用 <span class="term">TraceStore</span> 落盘成 JSON。这就是每次 PR 前必跑的那个 smoke——它证明的不是"评测对了"，而是"管线契约没断"。</p>
+
+        <h2 id="path-b">路径 B：provider / evidence-chain live loop</h2>
+        <p>路径 B 是另一个世界。它住在 <span class="term">runtime/live_model_loop.py</span>（注意是 <code>runtime/</code> 而非 <code>core/</code>——live session 的东西不进 core），入口是 <span class="term">run_rpf10_live_model_loop</span>。它不再把后端当 Protocol 的薄壳，而是把它当成一个 <span class="term">provider</span>：通过一个暴露八个动词的 facade（<code>materialize / reset / apply_state / apply_control / step / measure / query / close</code>）驱动一次真实 run。每一步的产物——观测帧、控制 ack、测量快照、求解器诊断——都做成 hash 寻址的 <span class="term">ArtifactRef</span>，最后缝成 trace，并生成一份 <code>report.json</code>，里头一排 <span class="term">claim_flags</span>（backend_parity、task_success、official_benchmark_reproduction、real_world_safety…）<b>全部为 False</b>。</p>
+        <p>路径 B 还有一条路径 A 没有的纪律：模型看到的观测是<i>脱敏</i>过的（<code>_build_model_visible_observation</code> 会抽掉 privileged state、native dump、solver diagnostics、evaluator truth），而且一旦 pre/post 测量缺失，loop 会走 <code>_finalize_blocked_loop()</code> 记下 <code>blocking_reasons</code>，<b>绝不</b>把缺测量悄悄填成 0。这些机制是路径 B 的灵魂，下两节（<a href="6-2-rpf.html">6.2</a> 讲八动词 facade，<a href="6-3-live-loop.html">6.3</a> 讲完整 live loop）会逐一拆开。这里你只需记住它和路径 A 的分工。</p>
+
+        <h2 id="shared-contract">两条路，一套证据契约</h2>
+        <p>把两条路并排放，差异一目了然：</p>
+        <ul>
+          <li><b>路径 A（EpisodeRunner）</b>：进程内、薄 Protocol、无 artifact、语义字段留空、为 smoke 与契约回归服务。它回答"管线闭不闭合"。</li>
+          <li><b>路径 B（provider live loop）</b>：拉真后端、八动词 facade、产物全 hash 寻址、脱敏观测、缺测量即 blocked、claim_flags 全 False。它回答"这次评测产出了什么级别的证据"。</li>
+        </ul>
+        <p>但两条路的<i>终点是同一个</i>：<span class="term">EpisodeTrace</span>，里面装着 <span class="term">PhysicalStateProjection</span> 与 <span class="term">TaskSemanticState</span>。这不是巧合，而是设计：runtime 层允许有多条产出路径，但证据的<b>形状</b>由 core 锁死，谁都改不了。这正是"OS"的含义——上层应用（怎么跑）可以换，底层契约（产出什么）不能换。</p>
+
+        <div class="callout claim">
+          <div class="c-h">这一节证明了什么 / 还不能证明什么</div>
+          <p>"存在两条产出 trace 的路径"<b>证明</b>的是 EOS 的 runtime 在工程上把"快速契约回归"和"重证据 live 评测"解耦开了；它<i>不</i>证明任何一次具体评测的结论成立。尤其是：路径 A 的 smoke 用的是 <span class="term">SemanticProxyBackend</span>——一个<b>语义代理</b>，不是真物理，它的 <code>success</code> 只说明管线跑通，绝不是任务能力的证据。哪条路产出的 trace 算"强证据"，取决于 trace 里的 provenance 与 claim boundary 是否齐全，而不取决于它走了哪条代码路。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>EOS 用两条路径产出 trace：路径 A 是 <span class="term">core/runtime/episode_runner.py</span> 里那个朴素的进程内 <span class="term">EpisodeRunner</span>，backend/model 是 Protocol，强制写入六组件与 repo commit，服务于 smoke 与契约回归；路径 B 是 <span class="term">runtime/live_model_loop.py</span> 里的 provider 证据链，拉真后端、产 artifact、缺测量即 blocked。两条路共用 <span class="term">EpisodeTrace</span> / <span class="term">PhysicalStateProjection</span> / <span class="term">TaskSemanticState</span> 这套 core 契约——这就是 runtime 层"可换路径、不可换证据"的核心原则。</p>
+        <p>下一节，我们放大路径 B 的引擎：那个借了 MetaSim 工程外形、却长出八个自己动词的 <span class="term">Runtime Provider Facade</span>。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

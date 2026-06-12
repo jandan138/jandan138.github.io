@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>适配器即防腐层：EBench / AutoBio · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="4-2">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 4 · Packs &amp; Adapters · 4-2</div>
+        <h1>适配器即防腐层：EBench / AutoBio</h1>
+        <p class="lede">scenario pack 接的是<i>你自己设计</i>的场景。但具身评测的现实是：外面已经有一堆做好的 benchmark，各自带着自己的 runtime、score schema、相机名、动作维度。要把它们接进来，又不让它们的设计反向"塑形" EOS 的 core——这正是 adapter 要解决的问题。它的形态有个经典名字：<span class="term">anti-corruption layer</span>（防腐层）。</p>
+
+        <h2 id="acl-pattern">为什么是"防腐层"</h2>
+        <p>防腐层是一个边界模式：当你的干净领域模型要和一个<i>外部的、你无法控制的</i>系统打交道时，你不让外部系统的概念漏进来，而是在中间放一层翻译，把外部世界的语言翻成你自己的语言。<a href="../00-orientation/0-2-constellation.html">铁律二</a>把这条写死了：EBench、GenManip、AutoBio、Isaac 4.1 <b>只能经 adapter 接入，不得反塑 core API</b>。</p>
+        <p>具体到代码红线——这些是<b>允许</b>的：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">允许</span><button class="cp">复制</button></div><pre><code>adapters/ebench/
+adapters/autobio/
+configs/backend_profiles/ebench_genmanip_legacy.yaml</code></pre></div>
+        <p>而这些是<b>不允许</b>的——它们会把外部 benchmark 的概念焊进 core：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">不允许</span><button class="cp">复制</button></div><pre><code>core.GenManipRuntime
+core.Lift2Action
+core.EBenchScore</code></pre></div>
+
+        <div class="bridge eb">
+          <div class="c-h"><span class="tag">从 EBench 看</span> 你的"家"被收编成了一层翻译</div>
+          <p>EBench 在 EOS 里的定位是 <span class="term-i">a compatibility target and design reference, not the base framework</span>——一个兼容目标和设计参考，而不是底座。这听起来有点冷酷，但它正是 0.1 那句"EBench 现在是一个 adapter"的工程落地。你熟悉的那套 client–server、capability profile、action chunking 不会消失；它们会被<i>提取成思想</i>吸收进 core，而把具体实现关进 <code>adapters/ebench/</code>。</p>
+        </div>
+
+        <h2 id="ebench-absorb-vs-keep">EBench adapter：吸收什么 vs 留下什么</h2>
+        <p>设计一个防腐层，最关键的判断是<b>哪些东西值得提炼成通用概念（吸收进 core），哪些是 benchmark 的偶然实现细节（必须留在 adapter）</b>。EBench 这条线分得很清楚：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">EBench adapter 边界</span><button class="cp">复制</button></div><pre><code>吸收进 core（变成通用契约）：
+  multi-axis capability profile      # 多轴画像哲学
+  client–server model interface      # 模型与环境解耦
+  action chunking                    # 动作分块
+  train / test / generalization split
+  diagnostic report                  # 诊断式报告
+  依赖隔离
+
+留在 adapter（外部偶然实现）：
+  GenManip runtime                   # 具体仿真 server
+  Isaac Sim 4.1 lock-in              # 版本锁定
+  Lift2 embodiment                   # 具体本体
+  EBench score schema                # 它的打分格式
+  dataset layout / server·client 命令
+  camera names / action dims         # 相机名、动作维度</code></pre></div>
+        <p>翻译的产物是一张<b>映射表</b>：外部世界的每个概念被翻成 EOS 的一个契约对象。</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">EBench → EOS 映射</span><button class="cp">复制</button></div><pre><code>EBench task        → imported TaskSpec
+GenManip runtime   → adapter runtime config
+Lift2 embodiment   → 一个 EmbodimentSpec
+EBench score       → MetricResult
+Isaac Sim 4.1      → legacy BackendProfile (ebench_genmanip_legacy.yaml,
+                                            purpose: compatibility_only)</code></pre></div>
+        <p>对应的代码就住在 <span class="term">adapters/ebench/</span>：<code>import_task.py</code>、<code>map_score.py</code>、<code>runtime_probe.py</code>、<code>fixture_trace.py</code>、<code>smoke_*.py</code>。</p>
+
+        <h2 id="ebench-smoke">smoke 的目标：是翻译通路，不是复现</h2>
+        <p>这里有一个极易被夸大的地方。EBench adapter 的 smoke 目标只是证明<b>一条翻译通路是通的</b>：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">EBench adapter smoke 目标</span><button class="cp">复制</button></div><pre><code>EBench / GenManip episode
+   → EBenchAdapter
+   → EpisodeTrace
+   → MetricResult
+   → Report stub</code></pre></div>
+        <p>注意终点是一个 <span class="term">Report stub</span>，不是一张和官方对齐的成绩单。这条 smoke <b>不是 full reproduction</b>——它不声称复现了 EBench 的官方 benchmark 数字，只声称"外部 episode 能被翻译成一条带证据的 EpisodeTrace 并跑过一遍度量"。</p>
+
+        <div class="callout claim">
+          <div class="c-h">compatibility smoke ≠ benchmark reproduction</div>
+          <p>一条 adapter smoke 跑通，证明的是<b>翻译契约成立</b>：外部 benchmark 的 task/score 能被映射进 EOS 的 trace 与 metric 体系。它<i>不</i>证明：你复现了那个 benchmark 的官方结果、你的后端和它的后端物理等价、或者模型在那个 benchmark 上的真实排名。"compatibility smoke" 和 "full benchmark reproduction" 是必须分开声明的两件事。</p>
+        </div>
+
+        <h2 id="autobio">AutoBio adapter：一个 MuJoCo 数字生物实验室</h2>
+        <p>第二个 adapter 是 <span class="term">AutoBio</span>——一个跑在 MuJoCo 上的数字生物实验室 benchmark（arXiv:2505.14030，HKU/TeleAI/Tsinghua/SJTU）。它有 <b>16 个任务、三档难度</b>，并且为了表达实验室操作写了不少自定义 MuJoCo 插件：螺纹用 <i>SDF of a circular helix</i>（圆螺旋的符号距离场）而不是 mesh 碰撞来表达、还有 detent、eccentric、quasi-static liquid；机器人涵盖 UR5e/ALOHA/Robotiq/DexHand；资产经 PGSR 3D Gaussian Splatting → CAD → watertight MJCF 流水线生成。</p>
+        <p>对这样一个"高保真但和我们栈不一样"的 benchmark，EOS 给了<b>两种复现模式</b>，而且把它们的 claim 边界划得很清：</p>
+        <ul>
+          <li><b>faithful（忠实）</b>——经 <span class="term">adapters/autobio/</span> + <span class="term">configs/backend_profiles/mujoco_autobio.yaml</span>，目标是真的去对接 AutoBio 的 MuJoCo runtime。</li>
+          <li><b>semantic（语义）</b>——经 <span class="term">scenario_packs/scientific_lab/</span>，用 EOS 自己的语义 proxy 原语<i>重新表达</i> AutoBio 风格的任务（pipette、拧盖……）。</li>
+        </ul>
+
+        <h2 id="readiness-probe">runtime_probe：一个就绪探针，不是一次运行</h2>
+        <p>那 faithful 模式现在跑起来了吗？去读 <span class="term">adapters/autobio/runtime_probe.py</span> 你会看到一个很诚实的答案：它产出的不是一次 run，而是一份<b>READINESS probe</b>（就绪探针）。它检查 AutoBio 根目录在不在、几个关键文件（<code>pickup_centrifuge_tube.py</code>、<code>libmjlab.so.3.3.0</code>……）和 Python 依赖（<code>mujoco</code>、<code>jax</code>、<code>trimesh</code>……）齐不齐——然后老老实实写下：</p>
+        <div class="code" data-lang="json"><div class="code-h"><span class="fn">embodied_eval_os_autobio_runtime_probe.v0（节选）</span><button class="cp">复制</button></div><pre><code>"runtime_mode": "readiness_probe",
+"runtime_status": "not_executed",
+"runtime_attempted": false,
+"backend_components": {
+  "physics":         {"name": "mujoco", "status": "not_started"},
+  "process_runtime": {"name": "autobio_task_systems_and_plugins",
+                      "status": "not_started"}, ... },
+"claim_boundary": "AutoBio readiness evidence only. This probe does not
+   execute MuJoCo, does not load an AutoBio task, and does not support
+   official AutoBio benchmark reproduction ..."</code></pre></div>
+        <p>每个 backend component 都标 <code>not_started</code>，<code>runtime_attempted=false</code>。这就是一个 <span class="term-i">compatibility smoke</span> 的诚实形态：它不假装跑过 MuJoCo，它只回答"如果要跑，环境齐不齐"。注意它还遵循 <a href="../00-orientation/0-1-why-eos.html">No Silent Fallback</a>——环境不齐时 <code>status</code> 是 <code>skipped</code>，绝不悄悄填一个"成功"。</p>
+
+        <div class="bridge sm">
+          <div class="c-h"><span class="tag">从物理后端 看</span> 为什么 semantic 模式不能声称物理等价</div>
+          <p>AutoBio 的螺纹是一段真实的 SDF-of-a-helix 在 MuJoCo 软接触求解器里跑出来的接触力。而 <code>scientific_lab</code> 的 semantic 模式（下一节细看）是用 <i>proxy 原语</i>返回一个语义 dict——它根本没有跑那个螺纹求解器。同一个"拧盖成功"，一边来自接触动力学，一边来自一个语义判据。这两者可以都<i>有用</i>，但它们不是同一种证据。</p>
+        </div>
+
+        <h2 id="runtime-contract">adapter 的共享契约：validate_runtime_trace</h2>
+        <p>所有 adapter 共用一道闸：<span class="term">adapters/runtime_contract.py::validate_runtime_trace(...)</span>。它强制 adapter 产出的 trace 满足几条<b>外部 provenance</b>纪律：在 <code>episode_metrics</code> 和 <code>metadata</code> 里<i>双写</i> <code>runtime_status</code>/<code>runtime_attempted</code>、必须带 <code>claim_boundary</code>、并且外部仓库的 commit 要一致（<code>metadata.external_commit == versions.external_commit</code>），合法的 <code>runtime_status</code> 只有 <code>{"executed", "skipped"}</code>。</p>
+        <p>这道闸的意义是：一条来自外部 benchmark 的 trace，必须随身携带"它来自哪个外部 commit、跑了还是跳过、它声称/不声称什么"。没有这套 provenance，外部证据就不能进 EOS 的证据账本。</p>
+
+        <div class="callout claim">
+          <div class="c-h">semantic reproduction ≠ 与 AutoBio 插件物理等价</div>
+          <p>用 <code>scientific_lab</code> 的 semantic 模式重新表达 AutoBio 风格任务，证明的是<b>这些任务的语义可以在 EOS 的层里被表达和评测</b>。它<i>不</i>证明：你复现了 AutoBio 的官方结果，也<i>不</i>证明你的 proxy 原语与 AutoBio 的自定义 MuJoCo 插件（SDF 螺纹、quasi-static liquid）物理等价。EOS 的记录里，AutoBio 的 faithful reproduction 状态被明确判为 <span class="verdict blocked">faithful_reproduction_not_approved</span>——roadmap 走完也不等于忠实复现。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>三点：（1）adapter 是 <b>anti-corruption layer</b>——外部 benchmark 只能经它接入，不得反塑 core；它吸收<i>思想</i>（多轴 profile、client–server、action chunking、split），留下<i>偶然实现</i>（GenManip runtime、Isaac 4.1、Lift2、score schema、相机名、动作维度）。（2）EBench smoke 的终点是 <code>EpisodeTrace → MetricResult → Report stub</code>，是 compatibility smoke 而非 full reproduction。（3）AutoBio 的 <code>runtime_probe.py</code> 产出的是 <code>runtime_status=not_executed</code> 的<b>就绪探针</b>；<code>validate_runtime_trace</code> 用外部 provenance 把所有 adapter trace 卡在统一契约上。</p>
+        <p>下一节，我们走进 EOS 的旗舰 pack <span class="term">scientific_lab</span>——看那些 core 明令禁止的名字（Pipette、TubeRack、Contamination）是如何<i>合法地</i>住在 pack 里、被关进笼子的。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>「Faithful reproduction」的清算 · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="7-4">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 7 · The Hard Problems · 7-4</div>
+        <h1>「Faithful reproduction」的清算</h1>
+        <p class="lede">一个词在整条记录线索上反复出现，像一根扎进项目良心里的刺：<b>faithful reproduction</b>。我们做到了忠实复现 AutoBio 吗？这一节没有新部件、没有新机制，它是这本书的<i>良心时刻</i>——讲一个项目如何一次次抵抗"我们已经复现了"的诱惑，并把这种抵抗本身，变成了它的设计纪律。</p>
+
+        <h2 id="the-temptation">诱惑：把"路线图走完"当成"复现"</h2>
+        <p>诱惑是这样来的。当你把一个 benchmark 的任务、资产、流程一项项搭进自己的系统，stage 一个个亮绿，很自然就想说："看，我们复现了 AutoBio。"但 05-29~31 的 <span class="term">autobio-final-faithful-reproduction-claim-review</span> 给出了一记冷水般清醒的判决——<span class="term">faithful_reproduction_not_approved</span>：</p>
+        <div class="callout warn">
+          <div class="c-h">judgment：roadmap completion ≠ faithful reproduction</div>
+          <p style="margin:0;font-style:italic">"roadmap completion is explicitly not faithful reproduction or official AutoBio full-chain execution."</p>
+        </div>
+        <p>把这句话读三遍。它在说：哪怕你的路线图<b>100% 走完</b>，那也<b>不</b>等于忠实复现，<b>不</b>等于跑通了官方 AutoBio 的全链路。"我做完了我列的事"和"我复现了别人的东西"，是两个不同的 claim——前者关于你的进度，后者关于一个需要外部对照才能成立的事实。一个项目能在自己最有动机自我表扬的时刻说出这句话，是它配得上"评测 OS"这个名字的第一个证据。</p>
+
+        <h2 id="redefine-then-never-approve">"plugin perfect reproduction"：重定义，然后从不批准</h2>
+        <p>同样的纪律在 Genesis 那条线上又上演了一遍，而且更克制。<span class="term">genesis-mujoco-plugin-perfect-parity-plan</span> 面对一个很有野心的目标——"plugin perfect reproduction"，让 Genesis 完美复刻 MuJoCo 插件物理。项目没有直接接受这个目标，而是先<b>把它重新定义</b>：从"内部物理完美一致"缩窄为"<b>可观测（observable）</b>层面的 MuJoCo-oracle parity"——只承诺测得到、看得见的那一层一致，不承诺引擎内部等价。</p>
+        <p>然后是最关键的一步：即便重定义之后，<b>它也从未被批准</b>。对应的 <span class="term">stage90</span> 始终停在：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">genesis-mujoco-plugin-perfect-parity-plan</span><button class="cp">复制</button></div><pre><code>stage90_status = planned_unapproved</code></pre></div>
+        <p>"planned"但"unapproved"——计划在那里，证据不够，就一直不点头。这和 <a href="../07-hard-problems/7-3-judgeable-loop.html">7.3</a> 里 R15"不声称 parity"是同一种克制，只是发生在更高的 roadmap 层：哪怕一个阶段被设计好了、甚至部分实现了，<b>没有达到它声明的 claim，就不让它毕业。</b></p>
+
+        <div class="callout claim">
+          <div class="c-h">两条 claim boundary，并排放</div>
+          <p><b>faithful reproduction</b>：roadmap 走完<i>不是</i>忠实复现，更不是官方全链路执行。<b>plugin perfect reproduction</b>：被重定义为 observable parity 后，<i>仍未获批</i>（<code>planned_unapproved</code>）。两条边界共享同一条信念——<b>claim 不会因为你努力了、或者计划写得漂亮，就自动成立；它只在证据足够时成立。</b>这正是铁律五"claim boundary 必填、不许过度宣称"在最有诱惑的关口上的兑现。</p>
+        </div>
+
+        <h2 id="meta-lesson">元教训：先命名 claim，再编 stage 号</h2>
+        <p>反复的拉锯逼出了一条贯穿全书的元教训，它几乎是这个项目的方法论自白：</p>
+        <div class="callout note">
+          <div class="c-h">meta-lesson</div>
+          <p style="margin:0">不要靠<i>加一个 stage 编号</i>来开启下一个阶段——要靠<b>给它命名那个它将被允许做出的 claim</b>。<span style="opacity:.7">("don't start the next phase by adding a stage number — start it by naming the claim it will be allowed to make.")</span></p>
+        </div>
+        <p>这句话扭转了驱动方向。一个被 stage 号驱动的项目，会陷入 <span class="term-i">stage-count thrash</span>：stage50、stage90、stage91……编号越滚越大，却没人说得清每个 stage 到底<i>证明了什么</i>。而一个被 claim 驱动的项目，每开一个阶段先问："这一步做完，我将<b>被允许说什么</b>？"——claim 在前，工作在后，编号只是记账符号。</p>
+        <p>正是这条教训，解释了 <a href="../07-hard-problems/7-2-worldstate-runtime.html">7.2</a> 里那个看似奇怪的决定：<b>把 AutoBio 这样的 benchmark 从架构拥有者降级为 regression scenario</b>。当一个外部 benchmark 当上了组织主轴，它就会用自己的 stage 号绑架整个项目，逼你不断"再加一个阶段去更像它"。把它降级成一条回归场景，是为了<b>从 stage-count thrash 里逃出来</b>——让 EOS 重新由"我能做出什么 claim"来组织，而不是由"我离复现某个 benchmark 还差几个 stage"来组织。</p>
+
+        <div class="bridge ev">
+          <div class="c-h"><span class="tag">从评测科学 看</span> 这是全书论点的结晶</div>
+          <p>这一节，是整本书的论点被压缩成一句良心。评测科学反复警告过这个失败模式：Raji 等人（NeurIPS 2021）说通用 benchmark 往往测不出它<i>宣称</i>的能力；Henderson 等人（"Deep RL that Matters", AAAI 2018）说不控变异、不诚实报告，结论就不可复现，这正是机器学习的<b>可复现性危机</b>。EOS 给出的回答不是更大的 support matrix，而是一种<b>对过度宣称的纪律</b>：每一个 stage、每一条 trace、每一次比较，都被一句"这<i>不</i>证明什么"守着。<span class="term">faithful_reproduction_not_approved</span> 和 <span class="term">planned_unapproved</span> 不是项目的失败记录——它们是这台评测 OS 最值得信任的地方。一台敢于对自己说"还不够"的机器，才配让别人相信它说"够了"的时候。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>三点，也是这一 Part 的收束：（1）<span class="term">faithful_reproduction_not_approved</span>——"roadmap completion 明确<i>不是</i> faithful reproduction"，进度不能冒充复现；（2）"plugin perfect reproduction"被重定义为 <b>observable parity</b> 后<b>仍从未获批</b>（<code>stage90_status=planned_unapproved</code>），证据不足就不点头；（3）元教训——<b>先命名 claim，再编 stage 号</b>，并以"把 benchmark 降级为 regression scenario"逃离 stage-count thrash。整本书的纪律，在这里凝成一句话：<b>claim 只在证据足够时成立。</b></p>
+        <p>Part 7 到此结束。我们走过了 stage50 的静默崩坏、WorldState Runtime 的地基之战、judgeable loop 的逐笔记账，以及对"faithful reproduction"的清算。下一 Part，我们把这些硬仗里淬炼出的纪律，带进一次完整的 capstone 实战。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

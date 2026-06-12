@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EpisodeTrace 解剖 · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="3-3">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 3 · Trace &amp; State · 3-3</div>
+        <h1>EpisodeTrace 解剖</h1>
+        <p class="lede">我们终于爬到脊柱顶端的 <span class="term">L6</span>。这一节不讲愿景，只解剖一个真实的 dataclass：<span class="term">EpisodeTrace</span>。它是 EOS 全部主张的最终落点——「The trace design is the product boundary.」一条 trace 凭什么算<b>强证据</b>而不是一堆数字？答案全写在它的字段里：provenance、privileged-state policy、claim boundary、六大组件。我们逐字段看，并看看为什么少了其中任何一个，这条 trace 就<i>不算证据</i>。</p>
+
+        <h2 id="the-dataclass">真实的字段表</h2>
+        <p>先把 <span class="term">core/state/trace.py</span> 里的两个 dataclass 完整摆出来。这是代码，不是示意：</p>
+        <div class="code" data-lang="python"><div class="code-h"><span class="fn">src/embodied_eval_os/core/state/trace.py</span><button class="cp">复制</button></div><pre><code>@dataclass
+class EpisodeTrace:
+    episode_id: str
+    task_id: str
+    scenario_pack: str
+    backend_profile_id: str
+    physics_profile_id: str | None = None
+    renderer_profile_id: str | None = None
+    seed: int | None = None
+    model_profile_id: str | None = None
+    versions: dict[str, Any] = field(default_factory=dict)
+    backend_components: dict[str, Any] = field(default_factory=dict)
+    privileged_state_policy: str = "model_input_excludes_privileged_state"
+    claim_boundary: str = (
+        "Trace evidence only; no simulator fidelity or real-world safety claim."
+    )
+    steps: list[TraceStep] = field(default_factory=list)
+    episode_metrics: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)</code></pre></div>
+        <p>每一步则是一个 <span class="term">TraceStep</span>：</p>
+        <div class="code" data-lang="python"><div class="code-h"><span class="fn">src/embodied_eval_os/core/state/trace.py</span><button class="cp">复制</button></div><pre><code>@dataclass(init=False)
+class TraceStep:
+    step_index: int
+    time_s: float
+    observation: dict[str, Any]
+    action: dict[str, Any] | list[float] | None
+    physical_state_projection: PhysicalStateProjection | None = None
+    task_semantic_state: TaskSemanticState | None = None
+    prediction: PredictedFuture | None = None
+    metric_results: dict[str, Any] = field(default_factory=dict)
+    privileged_state_visible_to_model: bool = False
+    metadata: dict[str, Any] = field(default_factory=dict)</code></pre></div>
+        <p>注意 <code>TraceStep</code> 怎样把上一节的三层状态收编进来：每一步挂一个 <span class="term">physical_state_projection</span>（L4）、一个 <span class="term">task_semantic_state</span>（L5），可选一个 <span class="term">prediction</span>（给世界模型评测用的 <code>PredictedFuture</code>）。脊柱在这里合龙：逐步的物理与语义证据，被串成一条带时间轴的 episode。下面这个部件让你交互地浏览一条真实 trace 的 JSON，重点看高亮的 <code>claim_boundary</code> 与 privileged 字段：</p>
+
+        <div class="lab">
+          <div class="lab-h"><span class="lab-tag">interactive</span><span class="lab-t">交互浏览一条 EpisodeTrace</span></div>
+          <div class="lab-body" data-widget="trace-anatomy"></div>
+          <div class="lab-cap">展开各字段。留意 <code>claim_boundary</code> 与 <code>privileged_state_visible_to_model</code> 怎样把「这证明了什么」直接写进数据里。</div>
+        </div>
+
+        <h2 id="provenance">versions：没有它，这就不是证据</h2>
+        <p><span class="term">versions</span> 是整条 trace 里最朴素、也最关键的字段。它装的是这次评测的<b>provenance（出处）</b>：repo commit、scenario pack version、task spec version、backend profile version、asset manifest version、model checkpoint hash、seed、以及 determinism 相关的环境变量。EOS 的措辞毫不含糊：</p>
+        <div class="callout"><p style="margin:0;font-style:italic">“Without this metadata, the trace is not considered valid evidence.”</p></div>
+        <p>这一句把 <span class="term">versions</span> 从「锦上添花的元数据」提升为「<i>证据资格的前提</i>」。一条没记清自己跑在哪个 commit、哪个资产清单、哪个 checkpoint、哪个 seed 上的 trace，无法被任何人重跑、复核、归因——它只是一堆数字，不是证据。这也是为什么 <span class="term">EpisodeRunner</span>（Path A）会用 <code>git -C &lt;repo_root&gt;</code> 刻意记录<i>所属 repo</i> 的 HEAD，而不是当前工作目录的——它要确保 provenance 指向正确的源头。</p>
+
+        <div class="bridge ev">
+          <div class="c-h"><span class="tag">从评测科学 看</span> versions = 每次评测自带的 Model Card + reproducibility checklist</div>
+          <p>评测科学里有两件成熟的工具：<span class="term">Model Cards</span>（Mitchell et al., FAT* 2019）要求每个模型披露它在什么条件下被评、适用边界在哪；NeurIPS <span class="term">reproducibility checklist</span>（Pineau et al., JMLR 2021）要求论文交代 seed、依赖、环境，好让别人重跑。EOS 的 <code>versions</code> 字段，就是把这两件原本写在论文附录里的东西，<b>下沉成每一条 trace 自带的、机器可读的结构</b>。Henderson et al.（"Deep RL that Matters", AAAI 2018）早就示范过：不记 seed 与环境变异的 RL 结果，复现起来天差地别。EOS 干脆让「不可复现的 trace」在定义上就不算证据。</p>
+        </div>
+
+        <h2 id="privileged">privileged_state_policy：模型看不到的，才公平</h2>
+        <p>两个相关字段守着「公平性」：trace 级的 <span class="term">privileged_state_policy</span>（默认 <code>"model_input_excludes_privileged_state"</code>）和步级的 <span class="term">privileged_state_visible_to_model</span>（默认 <code>False</code>）。规则是：默认情况下，喂给模型的输入<b>不含</b> privileged state（比如 evaluator 才该知道的真值、native 求解器内部量）；evaluator 与 recorder 可以看，但模型不行。如果某个 benchmark<i>故意</i>让模型条件于特权状态（state-conditioned eval），它必须把那个步的 <code>privileged_state_visible_to_model</code> 显式置 <code>True</code>——<b>显式标注，不许偷看</b>。</p>
+        <p>这条策略和 <a href="../06-runtime/6-2-rpf.html">RPF live loop</a> 里的 <code>_build_model_visible_observation()</code> 是一对：后者在喂给 policy 之前主动脱敏（去掉 privileged、native dump、solver diagnostics、evaluator truth），前者把「脱敏了没有」记进 trace 供事后审计。一个在运行时执行，一个在证据里留痕。</p>
+
+        <h2 id="claim-boundary">claim_boundary：把「不能证明什么」写进默认值</h2>
+        <p>最能体现 EOS 性格的，是 <span class="term">claim_boundary</span> 这个字段<i>有一个默认值</i>：</p>
+        <div class="code" data-lang="python"><div class="code-h"><span class="fn">src/embodied_eval_os/core/state/trace.py</span><button class="cp">复制</button></div><pre><code>claim_boundary: str = (
+    "Trace evidence only; no simulator fidelity or real-world safety claim."
+)</code></pre></div>
+        <p>换句话说，一条 trace<b>诞生时就默认声明了自己的谦逊</b>：我只是 trace 证据，我<i>不</i>声称仿真器的物理保真度，也<i>不</i>声称真实世界安全性。你得主动去放宽这个边界，而放宽必须有据。这正是 EOS 把「claim boundary」做成签名组件的方式——它不是写在文档里靠人自觉，而是焊进 dataclass 的默认字段，每条 trace 都带着它。这也是本书那些琥珀色 <span class="term-i">claim</span> 方框的代码源头。</p>
+
+        <h2 id="six-components">backend_components：六个，永远六个</h2>
+        <p><span class="term">backend_components</span> 字段装的是 <a href="../02-backends/2-1-six-components.html">铁律三</a>要求的那六个组件，逐 trace 落盘：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">backend_components 的六个键</span><button class="cp">复制</button></div><pre><code>platform · physics · renderer · sensors · control · process_runtime</code></pre></div>
+        <p>这不是装饰。Path A 的 <span class="term">EpisodeRunner</span> 里有一个常量 <code>STANDARD_BACKEND_COMPONENTS = ("platform", "physics", "renderer", "sensors", "control", "process_runtime")</code>，强制把这六个键写进<i>每一条</i> trace。它的作用是：你永远无法在 trace 里把一个后端含糊地写成「Isaac」或「MuJoCo」——你被迫交代是哪个 platform、哪个 physics、哪个 renderer……于是「换了一个组件」这种跨后端实验，在证据层面就天然可追踪（哪条轴变了，trace 里一目了然）。</p>
+
+        <h2 id="state-v2-guard">State V2 守门：from_dict 会拒绝 legacy key</h2>
+        <p>上一节预告过的牙齿，在这里咬合。<span class="term">TraceStep.from_dict</span> 在反序列化前会先扫一遍 legacy key：</p>
+        <div class="code" data-lang="python"><div class="code-h"><span class="fn">src/embodied_eval_os/core/state/trace.py</span><button class="cp">复制</button></div><pre><code>LEGACY_TRACE_STEP_KEYS = {
+    "canonical_physical_state",
+    "task_world_state",
+    "world_state",
+    "metrics",
+}
+# ...
+legacy_keys = LEGACY_TRACE_STEP_KEYS.intersection(payload)
+if legacy_keys:
+    raise ValueError(
+        "TraceStep payload contains legacy State V1 alias keys; "
+        "use tools.migrations.state_v1.load_legacy_trace_step()"
+    )</code></pre></div>
+        <p>一条 State V1 的 trace 喂进来，不会被悄悄「容忍」或半解析——它会<b>直接抛错</b>，并把你指向 <span class="term">tools.migrations.state_v1</span>。这跟 <a href="../01-foundations/1-3-no-silent-fallback.html">No Silent Fallback</a> 是同一种性格<!-- ok -->：宁可显式失败，也绝不静默地把一个含糊的输入当成有效证据。证据脊柱在入口处就立着一道闸。</p>
+
+        <div class="callout claim">
+          <div class="c-h">一条 EpisodeTrace 证明了什么 · 不证明什么</div>
+          <p>一条字段齐备的 <span class="term">EpisodeTrace</span><b>证明</b>的是：这次 episode <i>在可复现的出处下、用公平的可见性规则、记录了逐步的物理与语义证据，并自带它该被怎样解读的边界</i>。它<b>不</b>证明 <code>claim_boundary</code> 默认值里点名的那两件事——仿真器物理保真度、真实世界安全性——除非有额外证据并显式放宽边界。trace 是「证据成立」的<i>必要</i>条件，不是「结论成立」的<i>充分</i>条件：强证据 ≠ 强结论。下一节会从反面把这一点钉死。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>三件事：（1）<span class="term">EpisodeTrace</span> 是脊柱顶端的 L6，<span class="term">TraceStep</span> 把上节的三层状态串成带时间轴的 episode；（2）四个签名字段各司其职——<span class="term">versions</span>（没它就不算证据）、<span class="term">privileged_state_policy</span>（默认不让模型偷看真值）、<span class="term">claim_boundary</span>（默认就谦逊）、<span class="term">backend_components</span>（永远六个，强制写入）；（3）<span class="term">from_dict</span> 会<i>拒绝</i>legacy key——证据脊柱在入口立闸，不静默容错。</p>
+        <p>下一节是这一部分的压轴反问：既然状态这么重要，<i>为什么不能就用一个裸 <span class="term">TensorState</span></i>？我们会借 MetaSim 的 <code>TensorState</code> 做对照，看清「同样的形状，证明不了任何东西」。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

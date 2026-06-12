@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Scenario pack contract · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="4-1">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 4 · Packs &amp; Adapters · 4-1</div>
+        <h1>Scenario pack contract：场景如何接进一台评测 OS</h1>
+        <p class="lede">前三部分你都在看 core——那层场景中立的契约骨架。但 core 自己不评测任何东西：它不知道什么是 pipette、什么是 hazard level、装配对位算不算成功。这些<i>语义</i>住在 <span class="term">scenario pack</span> 里。这一节回答一个很具体的问题：一个 pack 到底要交出哪些东西，才算"接进了" EOS？而当你去仓库里找那个叫 <code>ScenarioPack</code> 的基类时，你会发现——它根本不存在。这恰恰是设计的关键。</p>
+
+        <h2 id="what-a-pack-provides">一个 pack 提供什么</h2>
+        <p>回忆 <a href="../00-orientation/0-1-why-eos.html">0.1</a> 的那张非目标清单：scientific-lab、wet-lab safety、home manipulation、factory assembly、field robotics 全都<b>不是</b> core，而是 scenario pack。所以一个 pack 的职责，就是把"某个具身领域的全部语义"打包成一组 core 能消费的产物，而<b>不去碰 core 抽象本身</b>。具体它要交出：</p>
+        <ul>
+          <li><b>tasks</b>——一组 <span class="term">TaskSpec</span>（指令模板、初始状态分布、成功/失败条件）。</li>
+          <li><b>scenes</b>——场景布置（<span class="term">SceneSpec</span>），定义有哪些物体、容器、设备。</li>
+          <li><b>assets</b>——一份 <span class="term">asset_manifest.yaml</span>，列出几何/材质资产及其 provenance。</li>
+          <li><b>embodiment maps</b>——把后端的物理量映射到场景语义组件的 <span class="term">semantic_component_map.yaml</span>。</li>
+          <li><b>metrics</b>——一组 <span class="term">MetricSpec</span> 实例（注意：core 只定义 metric <i>family</i>，pack 负责实例化具体度量）。</li>
+          <li><b>process primitives</b>——把 backend-normalized 的物理投影翻译成场景语义状态的代码（本节主角）。</li>
+        </ul>
+        <p>换句话说：pack 是"领域知识"，core 是"评测骨架"。骨架不变，领域知识可插拔——这正是"OS"那个词的含义。</p>
+
+        <div class="bridge eb">
+          <div class="c-h"><span class="tag">从 EBench 看</span> 你已经见过一个 pack 了</div>
+          <p>EBench 里 home-manipulation 那套任务（把蛋挞放进微波炉、关抽屉……）在 EOS 里就是 <span class="term">scenario_packs/home_manipulation/</span>——一个 EBench-compatible 的 pack。你在 EBench 里写过的"任务定义 + 场景 + 成功判据"，本质上就是在写一个 pack 的内容，只是当时它和 Isaac、Lift2 焊死了。EOS 做的事，是把这套结构从某个具体仿真器里<i>拔出来</i>，变成一份可移植的契约。</p>
+        </div>
+
+        <h2 id="directory-structure">必需的目录结构</h2>
+        <p>contract 文档对一个 pack 的目录布局有明确要求。一个完整的 pack 大致长这样：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">scenario_packs/&lt;pack_name&gt;/</span><button class="cp">复制</button></div><pre><code>README.md
+tasks/&lt;id&gt;.yaml                          # TaskSpec
+scenes/&lt;id&gt;.yaml                         # SceneSpec
+assets/asset_manifest.yaml              # 资产清单 + provenance
+embodiment_maps/semantic_component_map.yaml
+metrics/metric_spec.yaml                # MetricSpec 实例
+process_primitives/README.md            # 过程原语（代码在同目录）
+samplers/sampler_spec.yaml              # 初始状态采样
+baselines/baseline_profiles.yaml
+records/                                # 该 pack 的 dated records</code></pre></div>
+        <p>这不是官僚主义。每个目录都对应 trace 里一个会被审计的字段：没有 <code>asset_manifest</code> 就没有 asset manifest version，trace 就缺一段 provenance；没有 <code>metric_spec</code>，报告里的数值就没有 family、单位、target direction 可对照。<b>目录结构是证据结构的影子。</b></p>
+
+        <h2 id="no-base-class">代码现实：没有 ScenarioPack 基类</h2>
+        <p>现在讲最容易踩空的一点。如果你按直觉去 <code>grep</code> 一个 <code>class ScenarioPack(ABC)</code>，你会扑空——<span class="term-i">仓库里没有任何抽象 ScenarioPack 基类</span>。EOS 故意<i>不</i>用"继承一个大基类"的方式定义 pack。一个 pack 的契约，是靠下面三件事<b>组合</b>实现的：</p>
+        <ol>
+          <li><b>subclass core 的三个原语 ABC</b>。core 在 <span class="term">core/primitives/base.py</span> 里只给了三个抽象类，每个都只要求实现一个方法 <code>update(physical_state) -&gt; dict</code>：</li>
+        </ol>
+        <div class="code" data-lang="python"><div class="code-h"><span class="fn">src/embodied_eval_os/core/primitives/base.py</span><button class="cp">复制</button></div><pre><code>class InteractionPrimitive(ABC):
+    """接触/交互语义：门铰链、螺纹盖、插拔、对位、地形接触……"""
+    primitive_id: str
+    @abstractmethod
+    def update(self, physical_state: PhysicalStateProjection) -&gt; dict[str, Any]: ...
+
+class ProcessPrimitive(ABC):
+    """过程/材料/任务动力学：材料转移 proxy、装配状态、传送带过程……"""
+    primitive_id: str
+    @abstractmethod
+    def update(self, physical_state: PhysicalStateProjection) -&gt; dict[str, Any]: ...
+
+class DevicePrimitive(ABC):
+    """仪器/家电/工厂设备的状态机。"""
+    primitive_id: str
+    @abstractmethod
+    def update(self, physical_state: PhysicalStateProjection) -&gt; dict[str, Any]: ...</code></pre></div>
+        <p>注意这三个类的 docstring 里举的例子横跨家居、工厂、地形——它们是<b>场景中立</b>的。core 只承诺一件事：给你一个 backend-normalized 的 <span class="term">PhysicalStateProjection</span>（L4，那个有 <code>robots/objects/joints/contacts</code> 的物理投影），你的原语把它翻译成<i>你的领域语义</i>，返回一个 dict。这个 dict 最终落进 <span class="term">TaskSemanticState</span>（L5）。</p>
+        <ol start="2">
+          <li><b>用 spec dataclass 描述任务与度量</b>——<span class="term">TaskSpec</span>、<span class="term">SceneSpec</span>、<span class="term">MetricSpec</span> 等都是 core 的 frozen dataclass，pack 只是<i>实例化</i>它们，不继承、不改字段。</li>
+          <li><b>用自由的 builder 函数把场景拼起来</b>。例如视觉 pack <span class="term">scenario_packs/visual_manipulation_micro/</span> 里就是 <code>build_visual_push_slide_scenario(...)</code> 这样的普通函数 + <code>evaluate_progress(...)</code>，没有任何"框架钩子"。</li>
+        </ol>
+        <p>再加上一道<b>外部约束</b>：<span class="term">scripts/check_core_leakage.py</span> 会扫描 <code>core/**/*.py</code>，一旦发现 <code>pipette</code>/<code>contamination</code>/<code>mujoco</code> 这类禁词就让 CI 失败——这保证了所有领域语义<i>只能</i>住在 pack 侧。三个 ABC + spec dataclass + builder 函数 + leakage checker，合起来就是"pack contract"。没有第五样东西，也没有 widget。</p>
+
+        <div class="callout note">
+          <div class="c-h">为什么不要一个大基类</div>
+          <p>一个 <code>ScenarioPack</code> 抽象基类听起来很整洁，但它会变成一块"中心化的领域知识吸铁石"：每个新场景都想往基类上加一个方法、一个字段，最后 core 又被领域语义污染了——正是 <a href="../01-foundations/1-4-core-boundaries.html">1.4</a> 那条红线要防的事。用"几个最小 ABC + 自由函数"代替大基类，让 core 暴露的契约面尽可能窄，领域代码反而获得最大自由。</p>
+        </div>
+
+        <h2 id="taskspec-fields">TaskSpec 的必填字段</h2>
+        <p>一个 pack 的入口是它的任务。<span class="term">TaskSpec</span> 这个 dataclass 要求填齐以下字段，缺一不可：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">TaskSpec（core 契约，pack 负责实例化）</span><button class="cp">复制</button></div><pre><code>task_id                       # 全局唯一
+scenario_pack                 # 属于哪个 pack
+instruction_templates         # 自然语言指令模板（喂给模型）
+initial_state_distribution    # 初始状态怎么采样
+observation_spec              # ObservationSpec：模型看得到什么
+action_spec                   # ActionSpec：动作接口
+success_conditions            # 什么算成功
+failure_conditions            # 什么算失败
+metric_specs                  # 这个任务用哪些 MetricSpec
+allowed_backend_profiles      # 允许在哪些后端 profile 上跑
+privileged_state_policy: evaluator_only</code></pre></div>
+        <p>最后一行尤其要划重点：<code>privileged_state_policy: evaluator_only</code>。它把 <a href="../03-trace-state/3-3-episode-trace.html">3.3</a> 讲过的 Privileged State Rule 钉死在<i>任务定义</i>这一层——这个任务的特权状态默认<b>只给 evaluator/recorder 看，不喂给被测模型</b>。一个 pack 即使写得再丰富，只要漏了这条策略声明，它产出的结果在证据意义上就是可疑的。</p>
+
+        <div class="callout claim">
+          <div class="c-h">一个 pack "接进了" EOS，证明了什么</div>
+          <p>当一个 pack 提供了齐全的目录、合法的 <span class="term">TaskSpec</span>、subclass 了三个原语 ABC，并通过了 leakage checker——它证明的是：<b>这个领域的语义可以被 core 的契约表达、被 trace 审计、且没有污染 core</b>。它<i>不</i>证明：这些任务在任何真实后端上跑通了、度量数值是真实物理、或者模型在这个领域有能力。"契约闭合"（contract closure）和"结果闭合"（outcome closure）是两件事——pack contract 管的是前者。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>三点：（1）pack = 领域语义的打包（tasks/scenes/assets/embodiment maps/metrics/process primitives），core = 不变的评测骨架；（2）pack contract <b>不靠继承一个基类</b>，而靠 subclass <code>core.primitives</code> 三个 ABC（各实现 <code>update(physical_state)-&gt;dict</code>）+ 实例化 spec dataclass + 自由 builder 函数 + leakage checker 四者组合；（3）<span class="term">TaskSpec</span> 必填字段里，<code>privileged_state_policy: evaluator_only</code> 把特权状态纪律钉在任务层。</p>
+        <p>下一节，我们看 pack 的"另一半亲戚"——<b>adapter</b>。当要接的不是你自己设计的场景，而是一个<i>别人已经做好的 benchmark</i>（EBench、AutoBio）时，契约的玩法会变成一种叫 anti-corruption layer 的防御姿态。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

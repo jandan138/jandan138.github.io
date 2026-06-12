@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EmbodiedEval OS · 一本娓娓道来的交互式教程</title>
+  <link rel="stylesheet" href="assets/css/book.css" />
+</head>
+<body data-root="">
+  <header class="topbar">
+    <a class="brand" href="index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+  </header>
+
+  <div class="cover">
+    <div class="eyebrow">An interactive book · evidence-backed embodied evaluation</div>
+    <h1>EmbodiedEval OS</h1>
+    <div class="sub">一台 <i>domain-agnostic, backend-composable</i> 的具身智能评测操作系统</div>
+    <div class="meta">中文叙述 · 保留英文术语 · 零构建静态站点 · 面向已读完 EBench 教程前五章的读者</div>
+
+    <div class="hero-card">
+      <p style="margin:0;color:var(--ink-soft)">你已经懂 <span class="term">EBench</span>：一个跑在 Isaac Sim 上的 mobile-manipulation benchmark，client–server 架构，capability profile，flow matching baseline。这本书要带你看的是<b>下一层抽象</b>——当你不再满足于「再做一个 benchmark」，而是要造一台能评测<i>任意场景、任意本体、任意物理/渲染后端</i>的<b>评测 OS</b> 时，架构会长成什么样。在这里，EBench 只是它的一个 <span class="term">adapter</span>。</p>
+      <div class="hc-row">
+        <span class="pill">5 capability axes</span>
+        <span class="pill">6 backend components</span>
+        <span class="pill">L0–L6 layering</span>
+        <span class="pill">8 RPF verbs</span>
+        <span class="pill">EpisodeTrace</span>
+        <span class="pill">claim boundary</span>
+      </div>
+    </div>
+
+    <div id="cover-toc"></div>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="content.js"></script>
+  <script>
+    (function () {
+      var BOOK = window.EOSBOOK, el = document.getElementById("cover-toc");
+      if (!BOOK || !el) return;
+      var html = "";
+      BOOK.parts.forEach(function (p) {
+        html += '<div class="toc-part"><div class="tp-h"><span class="tp-label">' + p.label +
+          '</span><span class="tp-title">' + p.title + '</span></div>';
+        p.sections.forEach(function (s) {
+          html += '<a class="toc-sec" href="' + s.file + '"><span class="num">' + s.id +
+            '</span><span>' + s.title + '</span></a>';
+        });
+        html += '</div>';
+      });
+      el.innerHTML = html;
+    })();
+  </script>
+  <script src="assets/js/book.js"></script>
+</body>
+</html>

@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>仓库星座：core / packs / adapters / backends · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="0-2">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 0 · Orientation · 0-2</div>
+        <h1>仓库星座：core / packs / adapters / backends</h1>
+        <p class="lede">上一节给了你一句愿景："domain-agnostic, backend-composable evaluation OS"。但愿景不会自己变成纪律——纪律是被<b>目录结构</b>和<b>依赖方向</b>钉死的。这一节我们把整个仓库摊在桌面上，看清每一块负责什么、谁能 import 谁、以及那条"绝不反向"的依赖箭头。读完它，后面任何一节里出现的路径，你都能立刻知道它属于哪个"星系"。</p>
+
+        <h2 id="the-tree">先看一眼这棵树</h2>
+        <p>EOS 是<b>一个仓库</b>，但内部被切成几个职责泾渭分明的区域。下面是顶层布局（省略了一些次要文件）：</p>
+
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">embodied-eval-os/ (顶层布局)</span><button class="cp">复制</button></div><pre><code>src/embodied_eval_os/
+  core/                      # 场景中立的契约层（domain-agnostic）—— 受 leakage checker 守护
+    specs/                   #   TaskSpec / SceneSpec / BackendProfile / MetricSpec / ModelProfile ...
+    state/                   #   EpisodeTrace / TraceStep / PhysicalStateProjection / TaskSemanticState
+    primitives/              #   InteractionPrimitive / ProcessPrimitive / DevicePrimitive (三个 ABC)
+    evaluators/              #   Evaluator(ABC) / MetricResult / EpisodeResult
+    runtime/                 #   EpisodeRunner（Path A，in-process）/ EpisodeExecutionResult
+    recorders/               #   TraceStore / Recorder
+    reports/                 #   ReportGenerator / CapabilityProfile
+scenario_packs/             # 场景语义（pipette、hazard taxonomy…）—— import core，绝不反向
+  visual_manipulation_micro/ #   EVL-1 视觉 lane
+  scientific_lab/            #   pipette/threaded-cap 语义 proxy 原语
+adapters/                   # 被导入 benchmark 的概念（anti-corruption layer）
+  ebench/                    #   EBench / GenManip 兼容靶子
+  autobio/                   #   AutoBio readiness probe
+  runtime_contract.py        #   adapter 产出 trace 的共享校验
+backends/  renderers/  sensors/  control/   # 六大组件各自的实现侧
+model_adapters/             # random_policy / scripted_policy / http_policy（真模型 sidecar）
+runtime/                    # WorldSession、live model loop —— 注意：在顶层，不在 core
+configs/backend_profiles/   # dummy_backend.yaml / mujoco_autobio.yaml / genesis_native.yaml ...
+scripts/                    # check_core_leakage.py / check_architecture_debt.py ...
+tests/                      # 守护上述边界的测试
+examples/run_smoke.py       # 最小可跑路径
+docs/  ( design/ operations/ records/ )</code></pre></div>
+
+        <p>这棵树不是审美选择，而是<b>三条铁律</b>的物理外形。我们逐个区域过一遍它们各自"拥有"什么。</p>
+
+        <h2 id="core-owns">core 拥有契约，而不是语义</h2>
+        <p><span class="term">src/embodied_eval_os/core/</span> 是整座大厦的承重墙，它只放<b>场景中立的契约</b>（contracts），不放任何领域语义。它拥有的东西可以一口气数出来：<span class="term">specs/</span> 里的 <span class="term">TaskSpec</span> / <span class="term">SceneSpec</span> / <span class="term">BackendProfile</span> / <span class="term">MetricSpec</span> / <span class="term">ModelProfile</span>；<span class="term">state/</span> 里的 <span class="term">EpisodeTrace</span> / <span class="term">TraceStep</span> / <span class="term">PhysicalStateProjection</span> / <span class="term">TaskSemanticState</span>；<span class="term">primitives/</span> 里的三个抽象基类；<span class="term">evaluators/</span> / <span class="term">recorders/</span> / <span class="term">reports/</span>；以及 <span class="term">runtime/</span> 里那条简单的 in-process 评测路径 <span class="term">EpisodeRunner</span>。</p>
+        <p>关键在于这里出现的名字都是<i>抽象的</i>：它知道"有一种东西叫 metric family"，但不知道 <code>pipetting</code> 或 <code>contamination</code>；它知道"有一种东西叫 process primitive"，但不知道 <code>PipetteProxyPrimitive</code>。任何一个具体场景的名字泄进 core，<a href="../01-foundations/1-4-core-boundaries.html">1.4</a> 会告诉你 CI 会怎样让它红。</p>
+
+        <h2 id="packs-adapters">packs 拥有场景语义，adapters 拥有外来概念</h2>
+        <p><span class="term">scenario_packs/</span> 是场景语义的家。<span class="term">scientific_lab/</span> 把移液、拧盖、液量这些概念实现成 pack-local 的原语（subclass core 的三个 ABC），消费 core 给的 <span class="term">PhysicalStateProjection</span>，把结果写进 <span class="term">TaskSemanticState</span> 的 payload——core 永远不知道这些字段叫什么名字。<span class="term">visual_manipulation_micro/</span> 则是当前前沿 EVL-1 视觉 lane 的微场景。</p>
+        <p><span class="term">adapters/</span> 是<b>防腐层</b>（anti-corruption layer）：所有被导入的外部 benchmark 概念都关在这里。<span class="term">adapters/ebench/</span> 装 EBench / GenManip 的兼容靶子，<span class="term">adapters/autobio/</span> 装 AutoBio 的 readiness probe。它们的活儿是把外部世界翻译成 core 的契约，而<b>不允许反过来塑造 core 的 API</b>。</p>
+
+        <div class="bridge eb">
+          <div class="c-h"><span class="tag">从 EBench 看</span> 从"一堆仓库"到"一个仓库 + 严格内部边界"</div>
+          <p>回忆一下 EBench 在你手里的样子：它其实是一个<i>仓库星座</i>——GenManip 仿真 server 一个仓、genmanip-client 一个仓、Assets 一个仓、Dataset 又一个仓，它们靠跨进程协议和约定松散地缝在一起。EOS 反过来：它把这一切收进<b>一个</b>仓库，再用<b>严格的内部边界</b>（目录划分 + 依赖方向 + leakage checker）取代"跨仓库的隐式约定"。换句话说，EBench 用"物理上的仓库分离"来隔离关注点，EOS 用"逻辑上的层分离"来隔离关注点——后者更难偷懒，因为所有代码都在同一个 import 路径下，唯一拦着你把 GenManip 写进 core 的，是纪律和脚本。</p>
+        </div>
+
+        <h2 id="backends-runtime">backends、model_adapters 与那个容易踩错的 runtime/</h2>
+        <p><span class="term">backends/</span>、<span class="term">renderers/</span>、<span class="term">sensors/</span>、<span class="term">control/</span> 对应六大 backend 组件的实现侧（<a href="../02-backends/2-1-six-components.html">2.1</a> 会细讲为什么后端必须被拆成六块）。<span class="term">model_adapters/</span> 装被评模型的接入：<code>random_policy.py</code>、<code>scripted_policy.py</code>，以及通往真模型 sidecar 的 <code>http_policy.py</code>。<span class="term">configs/backend_profiles/</span> 则是一堆 YAML，把六大组件的具体取值声明成可复用的 profile。</p>
+        <p>这里有一个<b>最容易认错门牌</b>的地方：顶层还有一个 <span class="term">runtime/</span> 目录（注意：不是 <code>core/runtime/</code>），它装的是 <span class="term">WorldSession</span> 这个 live runtime 的 session 信封、以及 live model loop。它<b>不在 core 里</b>，因为它要触碰具体后端的生命周期与原生 artifact，是脏活；而 <code>core/runtime/</code> 里的 <span class="term">EpisodeRunner</span> 是干净的、in-process 的、不绑任何引擎的那条简单路径。两个 runtime，一个在核心一个在顶层，差别正是"契约 vs 实现"。</p>
+
+        <div class="callout note">
+          <div class="c-h">两个 runtime，别认错</div>
+          <p><span class="term">core/runtime/episode_runner.py</span>（干净、in-process、Path A）vs 顶层 <span class="term">runtime/live_model_loop.py</span>（脏、绑后端、Path B）。我们在 <a href="../06-runtime/6-1-two-paths.html">6.1</a> 会把两条路径并排剖开。</p>
+        </div>
+
+        <h2 id="dependency-direction">那条绝不反向的箭头</h2>
+        <p>现在说这一节真正的"核心思想"——它比目录布局重要得多。所有这些区域之间的依赖，<b>只能朝一个方向流</b>：</p>
+
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">依赖方向（绝不反向）</span><button class="cp">复制</button></div><pre><code>core  ←  scenario_packs
+core  ←  adapters
+core  ←  backends / renderers / sensors / control
+core  ←  model_adapters</code></pre></div>
+
+        <p>读法是：scenario_packs、adapters、backends、model_adapters 都<b>可以 import core</b>（它们要用 core 的契约），但 <b>core 永远不许 import 它们</b>。core 不知道 EBench 存在、不知道 scientific_lab 存在、不知道 MuJoCo 存在。这正是"domain-agnostic"在代码层面的精确含义：核心对所有具体场景与后端<i>一无所知</i>，所以才能服务于<i>任意</i>场景与后端。</p>
+        <p>这条箭头不是靠 code review 的善意维持的，而是靠 <span class="term">scripts/check_core_leakage.py</span> 强制的：它扫描 <code>core/**/*.py</code>，一旦发现 <code>ebench</code> / <code>genmanip</code> / <code>pipette</code> / <code>mujoco</code> 这类禁词（大小写不敏感、按子串或词边界匹配），就让检查失败、CI 变红。也就是说——"反向依赖"在物理上还没发生，名字泄漏就先被拦下了。</p>
+
+        <div class="callout claim">
+          <div class="c-h">这张目录树证明了什么、还不能证明什么</div>
+          <p>目录结构 + 依赖方向 + leakage checker，<b>能证明</b>的是"核心在静态层面保持了 domain-agnostic、没有被某个场景或某个仿真器反向塑造"。它<b>不能证明</b>的是"任何一个场景包真的跑通了""任何一个后端真的产出了可比证据"。一个干净的依赖图是<i>必要</i>条件，不是评测结论本身——结论永远要回到 trace 证据（<a href="../01-foundations/1-1-evidence.html">1.1</a>）。架构整洁是地基，不是楼。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>把这张地图记进肌肉记忆：<b>core</b> 拥有契约（specs/state/primitives/evaluators/runtime/recorders/reports），<b>scenario_packs</b> 拥有场景语义，<b>adapters</b> 拥有外来 benchmark 概念，<b>backends/renderers/sensors/control</b> 拥有六大组件实现，<b>model_adapters</b> 拥有被评模型接入，顶层 <b>runtime/</b> 拥有 WorldSession 与 live loop（不在 core）。而把它们粘在一起的不是耦合，是一条<b>绝不反向</b>的依赖箭头：<code>core ← 其它一切</code>，由 leakage checker 站岗。</p>
+        <p>下一节，我们交代怎么读这本书——它的受众、三座连接你已有知识的"桥"、以及全书的排版约定，好让你带着正确的姿势进入正文。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>wetlab_safety：危险感知的世界模型评测 · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="4-4">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 4 · Packs &amp; Adapters · 4-4</div>
+        <h1>wetlab_safety：危险感知的世界模型评测</h1>
+        <p class="lede">前面所有评测都在问同一件事："任务做成了吗？" 但具身智能最危险的失败，往往不是"没做成"，而是"做了一件会造成不可逆损害的事"。<span class="term">wetlab_safety</span>（WWSB，wet-lab endogenous-safety world-model benchmark）把评测的提问彻底换掉：它不问做没做成，它问——<i>一个世界模型能不能在损害发生<b>之前</b>预测出危险，并泛化到没见过的危险组合？</i></p>
+
+        <h2 id="core-question">核心问题：预测，而不是事后</h2>
+        <p>pack 文档把核心问题写得一字不改：</p>
+        <div class="callout">
+          <p style="margin:0;font-style:italic">“Can a world model predict unsafe state transitions <b>before damage happens</b>, and can it generalize to unseen hazard combinations?”</p>
+        </div>
+        <p>注意这里评测的对象不是 actor 策略，而是<span class="term">world model</span>——它的产物是 <span class="term">PredictedFuture</span>（回忆 L5/L6：<code>predicted_task_semantic_states</code>、<code>risk_scores</code>、<code>success_probability</code>）。目标也不只是"预测成功"，而是四件更难的事：safety-boundary prediction（边界预测）、dangerous-action filtering（危险动作过滤）、causal-chain prediction（因果链预测）、planning usefulness under risk（风险下的规划有用性）。</p>
+
+        <div class="bridge ev">
+          <div class="c-h"><span class="tag">从评测科学 看</span> 世界模型该按"有没有用"评，不是按像素</div>
+          <p>Tian、Finn、Wu 在 VP²（ICLR 2023）里给了一个反直觉但关键的结论：<span class="term-i">perceptual video metrics can be unreliable at predicting execution success</span>——一个视频预测得像素级逼真，并不代表它对下游决策有用。所以 EOS 评世界模型不看它画得多准，而看它的预测<b>对安全决策有没有用</b>：它能不能<i>提前</i>把"这个动作会导致 Level 3 不可逆损伤"这件事报出来。安全在这里被重述成一个<b>预测问题</b>。</p>
+        </div>
+
+        <h2 id="hazard-levels">危险等级 0–5</h2>
+        <p>WWSB 把危险后果分成六级。这套等级是 pack 私有的（core 只知道一个通用的 hazard severity scale，不认识"离心管"或"移液"）：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">wetlab_safety hazard levels（pack 私有）</span><button class="cp">复制</button></div><pre><code>Level 0: 标准成功操作
+Level 1: 可逆的轻微错误
+Level 2: 可逆的显著错误
+Level 3: 不可逆的局部损伤
+Level 4: 系统性连锁危险
+Level 5: 灾难性事故（仅仿真，或严格受控的 proxy）</code></pre></div>
+        <p>下面这个部件让你直观地玩一遍：调一个世界模型的"危险阈值"，看它在不同 hazard level 上的预测和真值对不上时，DDR（检出率）和 FNR（漏报率）怎么变。漏报一个 Level 3+ 的危险，比误报十个 Level 1 严重得多——这也是为什么数据集要负样本偏重。</p>
+
+        <div class="lab">
+          <div class="lab-h"><span class="lab-tag">interactive</span><span class="lab-t">危险等级 0–5：世界模型的预测 vs 真值</span></div>
+          <div class="lab-body" data-widget="hazard-levels"></div>
+          <div class="lab-cap">拖动阈值，观察 DDR（dangerous action detection rate）与 FNR-H（dangerous false negative rate）的权衡。重点看高 hazard level 的漏报代价。数值为示意。</div>
+        </div>
+
+        <h2 id="negative-heavy">负样本 ≥60%：故意"重危险"</h2>
+        <p>普通 benchmark 的数据多是成功轨迹。WWSB 反过来：它<b>故意让负样本占至少 60%</b>——失败行为、破坏性结果、危险状态转移。理由很朴素：你想评的是"能不能识别危险",那数据集里就必须有足够多的危险给它识别。一个只见过成功操作的世界模型，根本没机会暴露它对危险的盲区。</p>
+
+        <h2 id="metrics">六个度量，映射到 core family</h2>
+        <p>和 <code>scientific_lab</code> 一样，WWSB 不直接定义 core 度量——它定义场景<i>实例</i>，每个映射到一个抽象的 core metric family：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">wetlab_safety 度量 → core family</span><button class="cp">复制</button></div><pre><code>DDR    → hazard               dangerous action detection rate（危险动作检出率）
+FNR-H  → hazard               dangerous false negative rate（危险漏报率）
+SMA    → hazard / prediction  safety boundary prediction accuracy（安全边界预测准确率）
+STE    → prediction           state transition error（状态转移误差）
+DCS    → prediction           dynamic consistency score（动力学一致性）
+NHG    → generalization/hazard unseen hazard combination prediction（未见危险组合泛化）</code></pre></div>
+        <p>这张表把 <a href="../00-orientation/0-1-why-eos.html">五条能力轴</a>里的 <b>safety reasoning</b>、<b>world prediction</b>、<b>generalization</b> 三条同时点亮了——这正是 WWSB 存在的意义：它是少数能同时考这三轴的 pack。</p>
+
+        <h2 id="safety-data-rule">安全数据规则：不采真实危险数据</h2>
+        <p>这是一个评测危险的 benchmark 最该自律的地方。pack 文档划了一条硬线：<b>不在这个仓库里设计任何真实危险数据采集。</b> 允许的第一阶段数据只有四类——safe real proxy、instrumented proxy、simulation-only hazardous traces、abstract hazard traces；而真实的危险化学品释放、不受控的压力积累、爆炸/有毒反应、有害气溶胶，<b>未经外部安全评审一律禁止</b>。高危事件只能 simulation-only 或用安全的 proxy 材料表达。</p>
+
+        <div class="callout warn">
+          <div class="c-h">评测危险 ≠ 制造危险</div>
+          <p>一个评测危险感知的 benchmark，绝不应该为了"真实"去真的制造危险。WWSB 的全部"危险"都是仿真的、抽象的、或安全代理的——它评的是<i>模型对危险的预测能力</i>，而不是物理世界里真的有东西坏掉。这条线一旦松动，整个 pack 的伦理基础就塌了。</p>
+        </div>
+
+        <h2 id="first-milestone">第一里程碑：schema 闭合，不是 20K 轨迹</h2>
+        <p>最后一个反直觉但很 EOS 的决定：WWSB 的第一个有用里程碑<b>不是攒 20,000 条轨迹</b>，而是 <span class="term">schema closure</span>——把契约先闭合：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">wetlab_safety 第一里程碑 = schema closure</span><button class="cp">复制</button></div><pre><code>hazard taxonomy                                   # 危险分类法
++ abstract hazard trace schema                    # 抽象危险 trace schema
++ metric specs: DDR / FNR-H / SMA / STE / DCS / NHG
++ dummy world-model baseline                      # 一个占位世界模型基线
++ diagnostic report stub                          # 诊断报告 stub
+然后才扩展到更大数据集与 cross-protocol 评测</code></pre></div>
+        <p>这是 <a href="4-1-pack-contract.html">4.1</a> "contract closure 先于 outcome closure"哲学的又一次体现：先证明"这个评测<i>能被表达</i>、证据通路<i>是通的</i>",再去堆数据规模。一个没有 schema 的 20K 数据集，是一堆无法审计的字节；一个 schema 闭合 + dummy baseline + report stub 的小系统，才是一台可以真正长大的评测机器的地基。</p>
+
+        <div class="callout claim">
+          <div class="c-h">simulator-only hazard ≠ real-world safety certification</div>
+          <p>WWSB 的所有危险都来自仿真或抽象 hazard trace。它证明的是<b>一个世界模型能否在证据可审计的前提下，预测不安全的状态转移、并对未见危险组合泛化</b>——一种"把安全当成预测问题"的评测能力。它<i>绝不</i>证明：真实湿实验室里的安全性、任何形式的 real-world safety certification、或者一个模型可以被信任去管真实危险品。"simulator-only hazard metric" 与 "real-world safety" 之间隔着一道必须显式声明的鸿沟。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>三点：（1）<code>wetlab_safety</code>（WWSB）评的是<b>世界模型能否在损害发生前预测危险并泛化到未见危险组合</b>——安全被重述成预测问题，按 planning usefulness 而非像素保真来评；（2）hazard level 0–5、负样本 ≥60%，六个度量 DDR/FNR-H/SMA/STE/DCS/NHG 映射到 hazard/prediction/generalization 三条 core family；（3）<b>不采真实危险数据</b>（只用 safe proxy / simulation-only / abstract trace），第一里程碑是 <b>schema closure</b> 而非 20K 轨迹。</p>
+        <p>到这里，Part 4 走完了 pack 与 adapter 的两面：你自己设计的场景如何经契约接入、别人的 benchmark 如何经防腐层接入、旗舰 pack 如何把禁词关进笼子、安全 pack 如何把危险变成可审计的预测。下一部分，我们回到证据本身——看一条 episode 是怎样被真正<i>跑出来</i>并落成 trace 的。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

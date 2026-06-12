@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live model loop：观测 → 动作 → 证据 · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="6-3">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 6 · Runtime · 6-3</div>
+        <h1>Live model loop：观测 → 动作 → 证据</h1>
+        <p class="lede">上一节我们看了八个动词的 facade。这一节把它们串成一条完整的链——<span class="term">run_rpf10_live_model_loop</span>。这条链回答的是路径 B 真正的问题：当一个<i>真实模型</i>在一个<i>真实后端</i>上做一次决策，怎样让它"看到该看的、看不到不该看的"，又怎样把这一来一回固化成谁也赖不掉的证据。它的每个环节都在跟一种"作弊"或"幻觉"较劲。</p>
+
+        <h2 id="the-chain">一条链，十几个环节</h2>
+        <p>RPF-10 / EVL 的 live model loop 把八动词按一个固定顺序编排起来，中间插进脱敏、投影、判定与组装。整条链大致是这样：</p>
+
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">src/embodied_eval_os/runtime/live_model_loop.py — run_rpf10_live_model_loop</span><button class="cp">复制</button></div><pre><code>materialize  → reset  → measure(pre)
+   → build model-visible observation   (脱敏：去 privileged / native dump
+                                        / solver diagnostics / evaluator truth)
+   → policy.act(observation)
+   → apply_control(action) → ack
+   → step → measure(post)
+   → query_evidence(telemetry / solver_diagnostics / native_state_dump)
+   → build post PhysicalStateProjection → motion_delta → evaluator_result
+   → close
+   → assemble EpisodeTrace  → report.json (claim_flags 全 False)</code></pre></div>
+
+        <p>注意这条链和路径 A 的 runner 形状相似（也是 reset→act→step→measure），但每一步都被"证据化"了：<code>measure</code> 分成 pre 与 post 两次、动作要先变成 <code>WorldSessionControlRequest</code> 再换回一个 ack、所有产物都是 hash 寻址的 <span class="term">ArtifactRef</span>。最后这些产物被缝进一条 <span class="term">EpisodeTrace</span>，每步的 <code>task_semantic_state.procedure_state["runtime_flow"]</code> 里记着这一拍走过的动词序列。</p>
+
+        <h2 id="redaction">脱敏：让模型看不见"答案"</h2>
+        <p>整条链最微妙、也最像"评测科学"的一环，是 <span class="term">_build_model_visible_observation</span>。<code>measure(pre)</code> 抓到的快照里，可能塞满了模型<i>不该</i>看到的东西：privileged state（物体真实位姿、评判用的真值）、native dump（后端自己的内部状态）、solver diagnostics（求解器诊断）、evaluator truth（评判答案）。这个函数的工作，就是把这些统统挡在模型可见的观测之外，只留下一个干净的、模型在真实部署中本就能拿到的观测，并在 payload 里记下 <code>privileged_fields_withheld</code> 与 <code>privileged_state_visible_to_model: False</code>。</p>
+
+        <div class="bridge ev">
+          <div class="c-h"><span class="tag">从评测科学 看</span> 脱敏就是在守 construct validity</div>
+          <p>如果模型在决策时能偷看 evaluator truth 或物体真值，那你测到的就不是"它的能力"，而是"它抄答案的能力"——这是最经典的 <span class="term">construct validity</span> 失效（Jacobs &amp; Wallach, FAccT 2021）：你声称在测 A，实测的是 B。state-conditioned 的 benchmark 不是不能给模型喂特权状态，但<b>必须显式标注</b>，否则那个分数测的根本不是它宣称的构念。<code>_build_model_visible_observation</code> 这一步脱敏，就是把"防作弊"做成代码里强制的一道墙——默认模型输入<i>不含</i> privileged state，例外必须显式声明。</p>
+        </div>
+
+        <h2 id="no-silent-fallback">No silent fallback：缺测量 → blocked，不是 0</h2>
+        <p>这条链最硬的纪律，是它对"缺东西"的反应。假如 <code>measure(pre)</code> 或 <code>measure(post)</code> 没拿到该有的状态值，链<b>不会</b>假装一切正常、把 <code>motion_delta</code> 填成 0、把 <code>success</code> 填成 <code>true</code>。它会调用 <span class="term">_finalize_blocked_loop()</span>，在 trace 与 report 里写下 <code>blocking_reasons</code>（比如 <code>blocked_missing_measurement</code>），把这一拍标成 <span class="verdict blocked">blocked</span>。</p>
+        <p>这件事为什么重要？因为"缺测量填 0"是评测里最隐蔽的谎言——它把"我没测到"伪装成"我测到了，结果是 0"。前者是证据缺口，后者是阴性证据，两者的含义天差地别。EOS 用一整套 <code>blocked_*</code> 状态把这条缝堵死：缺测量、缺状态、缺 artifact、控制被拒、provider 不可用……每一种都有自己的显式状态码，谁也不许悄悄退化成默认值。强类型的验收落在 <span class="term">core/runtime/episode_execution.py</span> 的 <code>EpisodeExecutionResult</code> 上：<code>task_success</code> 只有当 <code>EvaluatorOutcomeArtifact.accepted_for_linkage</code> 为真时才非 None，否则它就是 None，而不是 False——"还没判"和"判为失败"也被分得清清楚楚。</p>
+
+        <h2 id="claim-flags">报告里那排全 False 的 claim_flags</h2>
+        <p>链跑完，组装出 <code>report.json</code>，里面有一排 <span class="term">claim_flags</span>：<code>backend_parity</code>、<code>pickup_task_success</code>、<code>official_benchmark_reproduction</code>、<code>hardware_readiness</code>、<code>real_world_safety</code>、<code>model_superiority</code>、<code>metasim_compatibility</code>——<b>全部为 False</b>。这不是谦虚，是制度。这条 lane 哪怕真的让一个模型在真后端上动了起来、产出了漂亮的 trace，它<i>默认</i>什么大结论都不声称。同样地 <code>standard_model_score</code> 默认是 <code>null</code>，只有在评判产物被接纳挂链、且 forbidden-claim 检查通过后才可能非空。报告的姿态是"先全部否认，再凭证据逐条解禁"。</p>
+
+        <h2 id="evl1">EVL-1：当前的前沿</h2>
+        <p>这条 live model loop 的当前最前沿实例叫 <span class="term">EVL-1</span>（Evidence-backed Visual Model Evaluation Lane）。它把上面的链具体化到<i>视觉</i>评测：</p>
+        <ul>
+          <li><b>RGB 证据</b>：观测是真实的 RGB 帧，存成 <code>.npy</code> 并 hash——画面本身成为 artifact-backed 的证据，而不是一个口头"我看到了图像"。</li>
+          <li><b>真模型路径</b>：用 stdlib 实现的 <span class="term">HTTPPolicyAdapter</span>，让一个真实模型可以隔着 HTTP 接进来出动作（仅依赖标准库，不引重型框架）。</li>
+          <li><b>微场景</b>：跑在 <span class="term">visual_manipulation_micro</span> 这个 scenario pack 上，小而完整。</li>
+          <li><b>诊断套件</b>：一个 10-episode 的诊断 suite，配 failure taxonomy（失败分类）与 forbidden-claim checker（禁词检查器），自动拦住报告里的过度宣称。</li>
+        </ul>
+        <p>而被点名的下一步是 <span class="term">EVL-2</span>：用一个<b>真正的 sidecar model server</b> 替换掉 EVL-1 里的 scripted policy——也就是从"脚本演示者驱动这条链"升级到"真模型服务驱动这条链"。注意这条演进的克制：先把<i>链与证据机制</i>钉死（EVL-1），再换上真模型（EVL-2），而不是反过来先接大模型、再补证据。</p>
+
+        <div class="callout claim">
+          <div class="c-h">EVL-1 这条 lane 证明了什么 / 还不能证明什么</div>
+          <p>EVL-1 <b>证明</b>的是：一个模型能在一条 RGB-证据化、特权状态脱敏、缺测量即 blocked、claim_flags 默认全 False 的 live lane 上跑完一个诊断 episode，并留下可审计的 artifact。它<i>不</i>证明这个模型在视觉操作上有任何<b>能力高低</b>——一条 live lane 不是 benchmark score，<code>model_superiority</code> 那一栏默认就是 False。它也不证明 <code>visual_manipulation_micro</code> 里的"成功"等于真实世界的成功。这条 lane 的价值在于<i>证据的质量</i>（脱敏正确、产物可 hash、缺口不被掩盖），不在于它跑出了什么漂亮数字。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>RPF-10 的 live model loop 把八动词串成一条证据链：<code>materialize→reset→measure(pre)→脱敏观测→policy.act→apply_control(ack)→step→measure(post)→query_evidence→投影→motion_delta→evaluator_result→close→组装 EpisodeTrace→report.json</code>。脱敏（<span class="term">_build_model_visible_observation</span>）守住 construct validity；no-silent-fallback 让缺 pre/post 测量变成 <span class="verdict blocked">blocked</span> 而非 0；report 的 <span class="term">claim_flags</span> 默认全 False。当前前沿是 <span class="term">EVL-1</span>（RGB 帧 hash、HTTPPolicyAdapter、visual_manipulation_micro、10-episode 诊断 + 禁词检查），下一步 <span class="term">EVL-2</span> 换上真 sidecar 模型服务。</p>
+        <p>最后一节，我们退后一步看治理：fixture-driven 的 conformance kit 怎样判 provider，以及 release claim levels 这把阶梯与那一串 make gate 怎样把"调通"一级一级抬到"可发布"。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

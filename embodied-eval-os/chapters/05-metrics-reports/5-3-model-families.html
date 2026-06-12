@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>模型家族与可见性模式 · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="5-3">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 5 · Metrics &amp; Reports · 5-3</div>
+        <h1>模型家族与可见性模式</h1>
+        <p class="lede">前两节讲的是"测什么"和"画成什么"。这一节讲"被测的是谁"。EBench 里"模型"几乎等同于 VLA。EOS 要评的东西更杂：纯 actor、世界模型、规划器、安全评判器、自主智能体——它们实现不同的方法、扮演不同的角色、在不同的可见性模式下被测。最锋利的一条纪律是：<span class="term">standard_model_score</span> 默认是 <b>null</b>，除非一组严格条件全部满足。</p>
+
+        <h2 id="families">模型家族：契约不为 VLA 量身定做</h2>
+        <p>EOS 把被评测对象按"它<i>能做什么</i>"分成若干<b>家族</b>。VLA 只是其中之一，而不是默认：</p>
+        <ul>
+          <li><span class="term">actor_policy</span> / <span class="term">vla</span>——给观测、出动作。EBench 那个 VLA 落在这里。</li>
+          <li><span class="term">world_model</span>（WAM）——给观测和一段动作序列，预测未来状态/观测。</li>
+          <li><span class="term">planner</span>——在候选计划里排序、择优。</li>
+          <li><span class="term">safety_critic</span>——给一个候选动作，评估它的危险性。</li>
+          <li><span class="term">autonomous_agent</span>——上述能力的组合体，自己跑完一整段。</li>
+        </ul>
+        <p>这五个家族不是凭空划的——它们直接对应 <span class="term">ModelAdapter</span> 契约上那几个方法。core 不假设一个模型"是 VLA"，只假设它"实现了契约里的某几个方法"。</p>
+
+        <h2 id="adapter">ModelAdapter：一个契约，五种实现深度</h2>
+        <p>打开 <code>model_adapters/base.py</code>，整个契约就这么大——一个 ABC，一个必须实现的方法，外加四个<i>可选</i>方法：</p>
+        <div class="code" data-lang="python"><div class="code-h"><span class="fn">src/embodied_eval_os/model_adapters/base.py</span><button class="cp">复制</button></div><pre><code>class ModelAdapter(ABC):
+    """Different models may implement one or more methods:
+    actor policy, world predictor, planner, safety critic, autonomous agent."""
+    model_id: str
+
+    def reset(self, task_context: dict) -&gt; None: ...
+
+    @abstractmethod
+    def act(self, observation: dict) -&gt; dict | list[float]: ...
+
+    def predict_future(self, observation, action_sequence) -&gt; PredictedFuture:
+        raise NotImplementedError
+
+    def rank_plans(self, observation, candidate_plans) -&gt; list:
+        raise NotImplementedError
+
+    def assess_safety(self, observation, candidate_action) -&gt; dict[str, float]:
+        raise NotImplementedError</code></pre></div>
+        <p>方法到家族是一一对应的：<code>act</code> ↔ actor_policy / vla（唯一 <code>@abstractmethod</code>，因为最低限度你得能出动作）；<code>predict_future</code> ↔ world_model（返回 <a href="../03-trace-state/3-3-episode-trace.html">PredictedFuture</a>）；<code>rank_plans</code> ↔ planner；<code>assess_safety</code> ↔ safety_critic。四个可选方法默认抛 <code>NotImplementedError</code>——这是<i>有意</i>的：一个纯 actor 不假装会预测未来，评测器据此知道哪几根能力轴对它根本不适用（落到 <code>unsupported</code> 状态，而不是给个假分）。</p>
+        <p>现成的实现住在 <code>model_adapters/</code>：<code>random_policy.py</code>、<code>scripted_policy.py</code>、以及 <span class="term">http_policy.py</span>（<code>HTTPPolicyAdapter</code>——把真模型放进一个 sidecar 进程、用 HTTP 通信的<i>真模型</i>接入路径，正是 <a href="../06-runtime/6-3-live-loop.html">EVL lane</a> 要替换 scripted policy 时走的口子）。</p>
+
+        <div class="bridge ev">
+          <div class="c-h"><span class="tag">从评测科学 看</span> 世界模型按"规划有用性"评，不按像素保真</div>
+          <p>注意 <code>predict_future</code> 和 <code>rank_plans</code> 在契约里是<i>分开</i>的两个方法——这呼应 5.2 的解耦轴。<span class="term">VP²</span>（Tian, Finn, Wu, ICLR 2023）已证"perceptual video metrics can be unreliable at predicting execution success"：world model 不该靠 <code>predict_future</code> 的像素重建质量打分，而该靠它接进 <code>rank_plans</code> 后下游决策变好了多少。<span class="term">DreamerV3</span>（Nature, 2025）同样把 world model 的价值锚在"能拿来做控制决策"。EOS 把这条认识做成了契约形状：会预测和能帮规划是两个独立方法，因此可以被独立评、独立缺失。</p>
+        </div>
+
+        <h2 id="roles">policy roles：同一个模型，不同的身份</h2>
+        <p>家族讲的是"能做什么"，<b>role</b> 讲的是"在这次评测里扮演什么"。同一个 actor_policy，可以是被考的人，也可以是参照系。EOS 区分这些角色：</p>
+        <ul>
+          <li><span class="term">evaluated_model</span>——真正被打分的那个（唯一能产出 standard score 的角色）。</li>
+          <li><span class="term">reference_policy</span>——参照基线，用来给"难易"定标。</li>
+          <li><span class="term">oracle_policy</span>——拿了 privileged 真值的上界参照。</li>
+          <li><span class="term">scripted_demonstrator</span> / <span class="term">human_demonstrator</span>——脚本/人类示范源。</li>
+          <li><span class="term">safety_supervisor</span>——在回路里兜底安全的监督者。</li>
+        </ul>
+        <p>角色之所以重要，是因为它直接决定一个结果"算不算 standard score"——一个 oracle_policy 跑出来的成功率再高，也不能被读成"模型能力"，因为它作弊看了真值。</p>
+
+        <h2 id="modes">三种 eval 模式与那个 null 分数</h2>
+        <p>与角色正交的是 <b>eval 模式</b>，它声明这次评测<i>放行了多少 privileged 信息</i>给模型：</p>
+        <ul>
+          <li><span class="term">standard_eval</span>——模型只看到脱敏后的 model-visible observation，<b>不含</b> privileged state。</li>
+          <li><span class="term">privileged_eval</span>——刻意放行部分真值（用于诊断"如果它知道这个，会不会做对"）。</li>
+          <li><span class="term">oracle_eval</span>——给满真值，求能力上界。</li>
+        </ul>
+        <p>现在是这一章最重要的一条规则。报告里那个 <span class="term">standard_model_score</span> 字段，默认是 <b>null</b>，<i>只有当下面每一条都成立</i>它才允许非空：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">standard_model_score 非 null 的全部前提</span><button class="cp">复制</button></div><pre><code>role  == evaluated_model
+mode  == standard_eval
+protocol 是正式协议（不是 smoke / 探针 / 临时跑）
+该 episode 的 model 输入中没有混入 privileged state
+forbidden-claim 检查全部通过（不含 model superiority / parity / … 等禁词）
+缺任一前提 → standard_model_score = null（不是 0.0，不是 success=true）</code></pre></div>
+        <p>这条规则把"我跑出了一个数"和"这个数可以被当成模型能力"彻底分开。一个 privileged_eval 跑出 0.9，<code>standard_model_score</code> 依然是 <code>null</code>——因为它不满足 standard 的脱敏前提。宁可留空，绝不给一个会被误读的数。</p>
+
+        <div class="callout note">
+          <div class="c-h">脱敏发生在哪里</div>
+          <p>"模型看不到 privileged state"不是靠君子协定，是靠代码：live model loop（<a href="../06-runtime/6-3-live-loop.html">6.3</a>）里有一步 <code>_build_model_visible_observation()</code>，专门剥掉 privileged 字段、native state dump、solver diagnostics、evaluator 真值，再喂给 <code>act()</code>。每条 trace 还记一个 <code>privileged_state_visible_to_model</code> 标志（默认 <code>False</code>），让"这次到底脱没脱敏"成为可审计的证据，而非声明。</p>
+        </div>
+
+        <div class="bridge eb">
+          <div class="c-h"><span class="tag">从 EBench 看</span> AutoBio 的 Expert，降级成通用的 ReferencePolicyProfile</div>
+          <p>AutoBio（接入在 <a href="../04-packs-adapters/4-2-adapters.html">adapter</a> 里）带了一个叫 <code>Expert</code> 的 privileged scripted demonstrator——它是 benchmark 专属概念。按铁律一，<code>Expert</code> <b>不许</b>进 core。EOS 的做法是把它在 core 里表述成一个通用的 <span class="term">ReferencePolicyProfile</span> / <span class="term">DemonstrationSourceProfile</span>：core 只知道"有一个参照策略/示范源，role=scripted_demonstrator，privileged"，而 "AutoBio 的 Expert" 这个具体身份留在 adapter。家族 + 角色 + 模式这套词汇，正是为了能在<i>不认识任何具体 benchmark</i>的前提下，准确描述每个被接入的策略到底是什么。</p>
+        </div>
+
+        <div class="callout claim">
+          <div class="c-h">一个非空分数证明了什么 / 没证明什么</div>
+          <p>当 <code>standard_model_score</code> 真的非空时，它<b>证明</b>的是：一个 evaluated_model 在 standard_eval、脱敏、正式协议、禁词检查通过的条件下，取得了这个可审计的结果。它<b>不</b>证明这个模型"比别的模型强"（model superiority 是禁词，要还原到逐轴逐 split），更不证明"它在真实世界能用"。而当分数是 <code>null</code> 时——这同样是一条<i>诚实</i>的证据，意思是"在 standard 条件下没有可声称的分数"，而不是"测了个 0"。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>三点：（1）EOS 按能力把模型分成 <b>actor_policy/vla、world_model、planner、safety_critic、autonomous_agent</b> 五个家族，一一对应 <span class="term">ModelAdapter</span> 的 <code>act / predict_future / rank_plans / assess_safety</code> 方法，只有 <code>act</code> 是必须实现的；（2）<b>role</b>（evaluated_model / reference / oracle / demonstrator / safety_supervisor）与 <b>mode</b>（standard / privileged / oracle）正交，共同决定一个结果的身份；（3）<span class="term">standard_model_score</span> 默认 <b>null</b>，只在 evaluated_model + standard_eval + 脱敏 + 正式协议 + 禁词检查全过时才非空——AutoBio 的 <code>Expert</code> 也因此降级成通用的 ReferencePolicyProfile。</p>
+        <p>最后一节，我们把放大镜对准度量本身的<b>边界</b>：一个 semantic proxy 度量到底证明了什么，以及把多轴结果聚合时会踩到的那些统计陷阱——包括 Simpson 悖论。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

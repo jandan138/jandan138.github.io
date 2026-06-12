@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>仓库与文件地图 · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="a-2">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Appendix · Reference · a-2</div>
+        <h1>仓库与文件地图</h1>
+        <p class="lede">读架构最快的方式是知道每样东西住在哪。这一页给一张带注释的目录树，对应仓库根 <code>/cpfs/user/zhuzihou/dev/embodied-eval-os</code>。记住那条贯穿全书的依赖方向：<b>core ← scenario_packs / adapters / backends / model_adapters</b>，core 永远不反向 import 它们。沿着这棵树看，依赖方向几乎一目了然。</p>
+
+        <h2 id="top">顶层布局</h2>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">embodied-eval-os/</span><button class="cp">复制</button></div><pre><code>embodied-eval-os/
+├── src/embodied_eval_os/   核心 Python 包（见下）
+├── scenario_packs/         场景语义包：领域 tasks/assets/primitives/metrics
+├── adapters/               防腐层：把外部 benchmark 接进来
+├── configs/backend_profiles/  后端 profile YAML（六组件声明）
+├── examples/               最小可跑示例（run_smoke.py）
+├── scripts/                gate/检查/live-lane 运行脚本
+├── tools/migrations/       State V1→V2 等迁移读取器
+├── tests/                  pytest 测试网
+└── docs/                   设计文档 + dated records 时间线</code></pre></div>
+
+        <h2 id="src">src/embodied_eval_os/ —— 包内部</h2>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">src/embodied_eval_os/</span><button class="cp">复制</button></div><pre><code>src/embodied_eval_os/
+├── core/            ★ domain-agnostic 契约层（禁领域名/sim 名）
+│   ├── specs/         TaskSpec/SceneSpec/ActionSpec/ObservationSpec/
+│   │                  MetricSpec/BackendProfile/ModelSpec/EmbodimentSpec/AssetSpec
+│   ├── state/         trace.py(EpisodeTrace/TraceStep)、
+│   │                  world_state.py(PhysicalStateProjection/TaskSemanticState/PredictedFuture)
+│   ├── primitives/    三个 ABC：InteractionPrimitive/ProcessPrimitive/DevicePrimitive
+│   ├── evaluators/    Evaluator ABC + TaskOutcome/Hazard/Prediction evaluator
+│   ├── recorders/     TraceStore（trace → JSON）
+│   ├── reports/       CapabilityProfile 等多轴报告类型
+│   └── runtime/       EpisodeRunner(路径A)、episode_execution、evidence_chain、
+│                      dynamic_trace、state_transfer、readiness_matrix 等
+├── runtime/         ★ live runtime（不在 core）：WorldSession(L2)、
+│                    provider_facade(RPF 八动词)、live_model_loop(RPF-10)、
+│                    visual_model_loop/suite(EVL)、visual_observation
+├── backends/        provider 实现：semantic_proxy、mujoco_provider、
+│                    pybullet_provider、genesis_provider
+├── model_adapters/  ModelAdapter ABC + random_policy/scripted_policy/http_policy
+├── control/         控制接口契约（action → control request）
+├── sensors/         传感器读出契约
+└── renderers/       图像类观测来源契约</code></pre></div>
+
+        <div class="callout note">
+          <div class="c-h">为什么 runtime/ 不在 core/</div>
+          <p>注意 <code>src/embodied_eval_os/runtime/</code> 和 <code>src/embodied_eval_os/core/runtime/</code> 是<b>两个不同的地方</b>。L2 的 <span class="term">WorldSession</span>、RPF facade、live model loop 住在<i>顶层</i> <code>runtime/</code>——它们是 live 运行时机器，会牵扯具体后端。core 里的 <code>core/runtime/</code> 只放<i>契约级</i>的东西（<span class="term">EpisodeRunner</span> 路径 A、强类型验收 <code>episode_execution.py</code>、证据链/状态迁移契约）。这条分界正是"core 保持 domain-agnostic、live 复杂度往外推"的物理体现。</p>
+        </div>
+
+        <h2 id="packs">scenario_packs/ —— 场景语义</h2>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">scenario_packs/</span><button class="cp">复制</button></div><pre><code>scenario_packs/
+├── visual_manipulation_micro/  EVL-1 视觉 lane：build_visual_push_slide_scenario / evaluate_progress
+├── scientific_lab/             pipette/tube/cap 语义代理；全标 semantic_process_proxy + evaluator_only
+├── wetlab_safety/              WWSB：hazard levels 0–5、负样本≥60%、DDR/FNR-H/SMA/STE/DCS/NHG
+├── home_manipulation/          EBench-compatible 家庭操作
+├── factory_assembly/           装配：part_alignment_error_mm 等
+└── field_robotics/             野外：rollover_risk_detection_rate 等
+   └── 每个 pack 内典型：tasks/ scenes/ assets/ metrics/ process_primitives/
+       embodiment_maps/ samplers/ baselines/ records/   （无抽象 ScenarioPack 基类）</code></pre></div>
+
+        <h2 id="adapters">adapters/ —— 防腐层</h2>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">adapters/</span><button class="cp">复制</button></div><pre><code>adapters/
+├── ebench/                import_task/map_score/runtime_probe/fixture_trace/smoke_*
+├── autobio/               runtime_probe.py → readiness probe（非真 run）
+├── external_solver_proxy/ 外部 solver 试点
+├── runtime_contract.py    validate_runtime_trace：强制 runtime_status/claim_boundary/provenance 一致
+└── trace_utils.py         adapter 共享 trace 工具</code></pre></div>
+
+        <h2 id="configs-scripts">configs/、scripts/、docs/</h2>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">configs/ · scripts/ · docs/</span><button class="cp">复制</button></div><pre><code>configs/backend_profiles/
+├── dummy_backend.yaml          最小代表性 profile（smoke 用）
+├── mujoco_autobio.yaml         富例：physics mujoco 3.3.0、limitations、anti_corruption_layer
+├── ebench_genmanip_legacy.yaml purpose: compatibility_only
+├── genesis_native.yaml / isaac_physx_rtx.yaml / isaac_newton_experimental.yaml
+└── autobio_* (大量)            AutoBio 复现/parity 各 stage 的 profile 快照
+
+scripts/
+├── check_core_leakage.py       扫 core 禁词（铁律一的 CI 红灯）
+├── check_state_v2_migration.py / check_backend_profiles.py / check_architecture_debt.py
+├── check_required_live_lanes.py 强制 no-silent-fallback 的 live-lane 检查
+└── run_rpf*_*.py / run_evl1_*.py / run_dual_runtime_smoke.py  live lane 运行脚本
+
+docs/
+├── design/   architecture / core-boundaries / backend-composability /
+│             trace-and-state / metric-system / scenario-pack-contract / *-pack.md
+└── records/  YYYY-MM-DD-*.md 时间线（trace spine、AutoBio 清算、stage50、WR、RPF…）</code></pre></div>
+
+        <h2 id="how-to-use">怎么用这张图</h2>
+        <p>下手前先定位"层"：你的改动是契约（→ <code>core/</code>）、场景语义（→ <code>scenario_packs/</code>）、还是外部接入（→ <code>adapters/</code>）？定错层，<a href="../08-capstone/8-3-pr-discipline.html">8.3</a> 的 <span class="term">check_core_leakage.py</span> 会在 CI 里替你纠正。想查某个术语属于哪层、什么意思，配 <a href="a-1-glossary.html">a-1 术语表</a>看；想要六组件/八动词/禁词的速查，翻 <a href="a-3-cheatsheet.html">a-3</a>。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

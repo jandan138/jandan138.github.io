@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>从一个 benchmark 到一台 evaluation OS · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="0-1">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 0 · Orientation · 0-1</div>
+        <h1>从一个 benchmark 到一台 evaluation OS</h1>
+        <p class="lede">你刚刚合上 <span class="term">EBench</span> 那本书。手里握着一个很具体的东西：一个跑在 Isaac Sim 上的 mobile-manipulation benchmark，一套 client–server 评测引擎，一张 capability profile。这本书要带你往上走一层——去看一个更贪心的问题：如果你<i>不再满足于"再做一个 benchmark"</i>，而是想造一台能评测<b>任意场景、任意本体、任意物理与渲染后端</b>的机器，架构会逼着你做出哪些选择？</p>
+
+        <h2 id="what-you-have">你已经有了什么</h2>
+        <p>先盘点一下你从 EBench 带过来的"家当"，因为这本书几乎每一节都会从这里出发：</p>
+        <ul>
+          <li>你知道 <span class="term">VLA</span> 是怎么回事——拿一个 VLM backbone，接上输出 robot action 的能力；你甚至理解了 <span class="term">flow matching</span> 怎么让策略表达多模态连续动作。</li>
+          <li>你知道仿真栈：<span class="term">Isaac Sim</span> = USD + PhysX + RTX，外加 cuRobo 做运动规划、GenManip 把仿真做成黑盒 server、LeRobot 管数据格式。</li>
+          <li>你知道 benchmark 方法论：把单一 <span class="term">success rate</span> 摊成多轴 <span class="term">capability profile</span>，用 tracks × splits 守住训练/测试隔离。</li>
+          <li>你知道评测引擎为什么是 client–server：把仿真当黑盒，让模型和环境的依赖互不污染。</li>
+        </ul>
+        <p>这些都还在。区别是：在 EBench 里，这些东西<b>长在一起</b>——Isaac、Lift2 本体、GenManip server、那套 action 维度，是焊死的。换一个实验室场景、换一个物理引擎、换一种本体，你就得重写一遍。EOS 的出发点，正是这种"焊死"带来的痛。</p>
+
+        <h2 id="one-benchmark-not-enough">一个 benchmark 不够</h2>
+        <p>设想你现在要评测的不只是"把蛋挞放进微波炉"，还有：湿实验室里机器人会不会做出危险动作、工厂装配线上的对位精度、野外机器人会不会翻车、以及——最关键的——一个<span class="term">world model</span> 能不能<i>预测</i>这些事情在发生之前就发生。再设想这些任务要分别跑在 Isaac、MuJoCo、Genesis 上，用不同的渲染器，喂给 actor、planner、safety-critic 等不同<i>家族</i>的模型。</p>
+        <p>这时候"再写一个 benchmark"就崩了。你需要的是一套<b>契约</b>：让场景、后端、模型、度量都能各自替换，而评测的骨架不变。这正是 <span class="term">EmbodiedEval OS</span> 想做的事——它的官方定位就一句话：</p>
+        <div class="callout"><p style="margin:0;font-style:italic">“A domain-agnostic, backend-composable evaluation OS for embodied intelligence.”</p></div>
+        <p>注意"OS"这个词不是修辞。操作系统的本事是：定义稳定的<i>接口</i>，让上面的应用和下面的硬件都可以换。EOS 想成为评测领域的那一层——它定义 <span class="term">contracts</span>，而把"实验室""Isaac""某个 VLA"都变成可插拔的 <span class="term">scenario pack</span> 或 <span class="term">adapter</span>。</p>
+
+        <div class="bridge eb">
+          <div class="c-h"><span class="tag">从 EBench 看</span> EBench 现在是一个 adapter</div>
+          <p>这是全书最该先记住的一句话：你刚学完的整个 EBench，在 EOS 里被收进 <span class="term">adapters/ebench/</span> 和 <span class="term">scenario_packs/home_manipulation/</span>。GenManip runtime、Isaac 4.1 lock-in、Lift2 本体、那套 action 维度——全部留在 adapter 里，<b>不许反向塑造 EOS 的核心 API</b>。EOS 从 EBench 吸收的是<i>思想</i>（多轴 capability profile、client–server 接口、action chunking、train/test split、诊断报告），而不是它的具体实现。</p>
+        </div>
+
+        <h2 id="is-not">EOS 不是什么</h2>
+        <p>一个项目的身份，往往是被它<i>拒绝成为</i>什么定义的。EOS 的设计文档第一页就摆出一张"非目标"清单，语气相当强硬。它<b>不是</b>：</p>
+        <ul>
+          <li>an <span class="term">EBench</span> fork；</li>
+          <li>a <span class="term">GenManip</span> wrapper；</li>
+          <li>an Isaac-only benchmark；</li>
+          <li>a scientific-lab-only benchmark；</li>
+          <li>a <span class="term">VLA</span>-only evaluation harness。</li>
+        </ul>
+        <p>Scientific-lab、wet-lab safety、home manipulation、factory assembly、field robotics、warehouse logistics、real robots——这些<b>统统是 scenario packs 或 adapters</b>，而不是核心。这条原则会在 <a href="../01-foundations/1-4-core-boundaries.html">1.4</a> 变成一条可执行的红线：一个叫 <span class="term">check_core_leakage.py</span> 的脚本，会扫描核心代码里有没有出现 <code>Pipette</code>、<code>GenManip</code>、<code>mujoco</code> 这类名字，出现一个就让 CI 失败。</p>
+
+        <h2 id="five-axes">五条能力轴</h2>
+        <p>EBench 教你"别只看一个数，要看多轴画像"。EOS 把这条原则推到具身智能的全谱：它要沿<b>五条能力轴</b>给模型画像。这五条轴值得你现在就记住，后面整本书都在为它们铺路：</p>
+        <ol>
+          <li><b>task execution</b>——任务到底做没做成。</li>
+          <li><b>world prediction</b>（WAM / world model）——模型能不能预测世界<i>接下来</i>会怎样。</li>
+          <li><b>safety reasoning</b>——能不能预判危险、识别边界、拒绝危险动作。</li>
+          <li><b>generalization</b>——换物体、换场景、换后端、换渲染、换本体，还行不行。</li>
+          <li><b>planning usefulness</b>——它的世界模型<i>真能帮上</i>规划与安全决策吗。</li>
+        </ol>
+        <p>下面这张（示意）雷达图，就是这五条轴的样子。它和 EBench 那张 capability profile 是同一种哲学的延续——只不过轴换成了具身智能更本质的能力维度。</p>
+
+        <div class="lab">
+          <div class="lab-h"><span class="lab-tag">interactive</span><span class="lab-t">五条能力轴：同样的"总分"，不一样的画像</span></div>
+          <div class="lab-body" data-widget="capability-radar"></div>
+          <div class="lab-cap">勾选不同模型对比。注意一个长于 task execution 的 actor 可能在 world prediction / safety 上一塌糊涂——而这恰恰是单一 success rate 会抹掉的信息。数值为示意。</div>
+        </div>
+
+        <div class="bridge ev">
+          <div class="c-h"><span class="tag">从评测科学 看</span> 为什么"五条轴"不是任性</div>
+          <p>测量理论里有个概念叫 <span class="term">construct validity</span>（Jacobs &amp; Wallach, FAccT 2021）：你的指标必须真的测到你声称在测的那个"构念"。把"具身智能"压成一个 success rate，就是典型的 operationalization gap——你声称在测"能力"，实测的只是"在某个固定分布上的成功率"。Raji 等人（NeurIPS 2021）干脆把这类号称通用的 benchmark 称作"Everything in the Whole Wide World Benchmark"，讽刺它们测不出自己宣称的普适能力。EOS 的五条轴，就是把这个"构念"显式拆开，让每条轴各自可问、可证。</p>
+        </div>
+
+        <h2 id="vs-metasim">和 MetaSim 划清的那条线</h2>
+        <p>如果你听说过 <span class="term">MetaSim</span> / RoboVerse（Abbeel、Malik 等人，arXiv:2504.18904），你可能会问：它不也是"统一很多仿真器"吗？EOS 用一句话把自己和它区分开，这句话值得抄在墙上：</p>
+        <div class="callout note">
+          <div class="c-h">招牌对照句</div>
+          <p style="margin:0;font-style:italic">“MetaSim solves cross-simulator execution ergonomics; EOS solves evidence-backed embodied evaluation claims.”</p>
+        </div>
+        <p>MetaSim 解决的是<b>跨仿真器的执行人机工程</b>：一套配置、一个 Handler 接口，让你在 11 个仿真器上跑同一个任务（我们在 <a href="../03-trace-state/3-4-tensorstate.html">3.4</a> 会细看它的 <span class="term">TensorState</span>）。这非常有用，但它不替你回答"这个评测结论站不站得住"。EOS 把全部重量压在后一个问题上：它该被衡量的，不是支持了多少个仿真器、support matrix 有多宽，而是——它的 action / state / trace <b>证据</b>，能不能支撑起关于任务成败、世界预测、安全推理、规划有用性、后端对比的<i>结论</i>。</p>
+
+        <div class="callout claim">
+          <div class="c-h">本书会怎样区分"愿景"和"代码事实"</div>
+          <p>EOS 的文档里既有宏大的<b>愿景</b>语言（五条能力轴、五个 scenario pack、世界模型评测），也有此刻代码里真实跑得起来的<b>地面真相</b>（一个 <span class="term">SemanticProxyBackend</span> 的 smoke、几个 live provider、一条视觉评测 lane）。这本书会把两者分开标注：讲愿景时说清"这是路线图"，讲机制时引真实的文件与类名。这本身就是 EOS 最核心的纪律——<b>claim boundary</b>：永远说清你这一步<i>证明了什么</i>、<i>还不能证明什么</i>。这个琥珀色的方框，全书都会用来标记这类"边界声明"。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>三件事就够进入下一节了：（1）EOS 不是又一个 benchmark，而是高一层的<b>评测 OS</b>——定义契约，让场景/后端/模型/度量都可替换，EBench 只是它的一个 adapter；（2）它沿<b>五条能力轴</b>给具身智能画像，把"能力"这个构念显式拆开；（3）它的立身之本是<b>证据</b>，不是仿真器覆盖面——这条线把它和 MetaSim 区分开。</p>
+        <p>下一节，我们站到高处俯瞰这个项目的"星座"：core、scenario_packs、adapters、backends、configs、runtime 各是什么，它们之间的依赖只能朝哪个方向流。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

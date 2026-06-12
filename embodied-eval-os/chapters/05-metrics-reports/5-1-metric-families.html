@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Metric family（core）vs metric instance（pack）· EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="5-1">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 5 · Metrics &amp; Reports · 5-1</div>
+        <h1>Metric family（core）vs metric instance（pack）</h1>
+        <p class="lede">在 EBench 里，一个 metric 就是一个写死的函数：算 success rate、算 path length、算 collision count。但在一台要评测<i>任意</i>场景的 OS 里，core 不可能知道"liquid volume error"或"part alignment"长什么样——它只能预先约定一组<b>抽象的度量家族</b>，再把"具体测什么、单位是什么"留给 scenario pack 去实例化。这一节，我们就把 metric 这件事拆成 <span class="term">family</span>（核拥有）和 <span class="term">instance</span>（包拥有）两层。</p>
+
+        <h2 id="why-split">为什么 metric 也要分两层</h2>
+        <p>回忆铁律一：<span class="term">core/</span> 必须 domain-agnostic。一旦你在 core 里写下一个叫 <code>liquid_volume_error_ul</code> 的度量，core 就被"科学实验室"这个场景污染了——下一个想接入 EOS 的工厂装配场景根本不关心微升。所以 core 在度量层面只允许存在一种东西：<b>family（家族）</b>，一个关于"这一类度量在评测什么维度"的抽象坐标，而不是任何一个具体度量。</p>
+        <p>具体的度量——它的名字、单位、取值范围、方向、需要 trace 里哪些字段——则是 <span class="term-i">实例</span>，由 scenario pack 在自己的 <code>metrics/metric_spec.yaml</code> 里声明，并标注它属于哪个 family。一句话：</p>
+        <div class="callout"><p style="margin:0;font-style:italic">Core defines the abstract metric <b>families</b>; scenario packs instantiate the concrete metric <b>instances</b>.</p></div>
+
+        <h2 id="family-list">家族清单（以及一处诚实的文档不一致）</h2>
+        <p>core 认可的 metric family 是一张<i>短</i>而<i>稳定</i>的清单。主清单是这八个：</p>
+        <ul>
+          <li><span class="term">task_outcome</span>——任务到底做没做成。</li>
+          <li><span class="term">procedure</span>——流程/步骤序是否合法。</li>
+          <li><span class="term">state_transition</span>——状态转移本身（预测 vs 真值）的误差。</li>
+          <li><span class="term">precision</span>——量化的精度类误差（位置、体积、对位…）。</li>
+          <li><span class="term">hazard</span>——危险检测、误报漏报、安全边界。</li>
+          <li><span class="term">prediction</span>——世界模型对未来的预测质量。</li>
+          <li><span class="term">planning</span>——预测/世界模型对规划与决策<i>是否有用</i>。</li>
+          <li><span class="term">resource</span>——时间、步数、算力等代价。</li>
+        </ul>
+        <p>现在到了本书的纪律时刻——我得诚实地告诉你文档里有<b>不一致</b>，而不是替它打圆场：</p>
+        <div class="callout warn">
+          <div class="c-h">两个"幽灵家族"</div>
+          <p><span class="term">restoration</span>（复原/归位类度量）<b>只出现在</b> <code>docs/design/metric-system.md</code> 里；而 <span class="term">generalization</span>（泛化）<b>只出现在</b> README、scenario-pack 文档和 reporting 文档里，没出现在 metric-system 的家族枚举中。换句话说，今天没有一处单一文件能给出"权威全集"。我把它们照实列出来，但请把它们当作<i>正在收敛中</i>的设计，而不是已冻结的 API。把 generalization 当成一条<b>报告轴</b>（见 <a href="5-2-capability-profile.html">5.2</a>）通常比当成一个 metric family 更稳妥。</p>
+        </div>
+        <p>注意：family 永远是抽象的。你<b>不</b>会在 family 清单里看到 <code>pipetting</code>、<code>contamination</code>、<code>conveyor</code> 这种场景词——那些是 instance 的事。family 决定的是"这条度量挂在能力画像的哪根轴上"。</p>
+
+        <h2 id="code-types">代码里的真实类型</h2>
+        <p>愿景说完，落到地面。打开 <code>core/evaluators/base.py</code>，你会发现 core 在度量这件事上其实只定义了三个朴素的数据结构和一个抽象基类——刻意地小：</p>
+        <div class="code" data-lang="python"><div class="code-h"><span class="fn">src/embodied_eval_os/core/evaluators/base.py</span><button class="cp">复制</button></div><pre><code>@dataclass
+class MetricResult:
+    name: str
+    value: float | int | bool | str
+    family: str
+    unit: str | None = None
+    details: dict[str, Any] = field(default_factory=dict)
+
+@dataclass
+class EpisodeResult:
+    episode_id: str
+    task_id: str
+    metrics: list[MetricResult] = field(default_factory=list)
+    summary: dict[str, Any] = field(default_factory=dict)
+
+class Evaluator(ABC):
+    evaluator_id: str
+    def evaluate_step(self, state, **kwargs) -&gt; list[MetricResult]:
+        return []
+    @abstractmethod
+    def evaluate_episode(self, trace) -&gt; EpisodeResult:
+        ...</code></pre></div>
+        <p>请注意 <span class="term">MetricResult</span> 上那个 <code>family: str</code> 字段——这就是 family/instance 两层结构在代码里的<i>缝合点</i>。一个 instance（比如名为 <code>liquid_volume_error_ul</code> 的结果）在运行时携带它属于哪个 family（<code>"precision"</code>），于是报告生成器（<a href="../06-runtime/6-1-two-paths.html">第 6 章</a>会再见到它）能把成百上千条 instance 自动归并到那八根抽象轴上，而 core 始终不必认识任何一个具体度量的名字。</p>
+        <p><span class="term">Evaluator</span> 是 ABC：<code>evaluate_step()</code> 默认返回空列表（不是每个评测器都逐步打分），<code>evaluate_episode(trace)</code> 是必须实现的——它吃一整条 <a href="../03-trace-state/3-3-episode-trace.html">EpisodeTrace</a>，吐一个 <span class="term">EpisodeResult</span>。core 里有三个具体子类作为<i>通用</i>评测器（注意它们的名字也全是 domain-agnostic 的）：</p>
+        <ul>
+          <li><span class="term">TaskOutcomeEvaluator</span>——把 trace 收束成任务成败（<code>examples/run_smoke.py</code> 用的就是它）。</li>
+          <li><span class="term">HazardEvaluator</span>——聚合 trace 里的 <code>hazard_events</code>，算出诸如 <code>max_hazard_severity</code> 之类的安全量。</li>
+          <li><span class="term">PredictionEvaluator</span>——比对世界模型的 <code>PredictedFuture</code> 与实际发生的状态。</li>
+        </ul>
+        <p>这三个评测器恰好覆盖了 outcome / hazard / prediction 三个最通用的 family——它们之所以能进 core，是因为它们对<i>每个</i> scenario pack 都有用，通过了 Core Entry Test。而 <code>liquid_volume_error_ul</code> 这种东西永远进不来。</p>
+
+        <h2 id="metricspec">MetricSpec：实例的声明书</h2>
+        <p>那 pack 怎么声明一个 instance？靠 <span class="term">MetricSpec</span>（一个进了 core 的<i>契约</i>类型——它本身是 domain-agnostic 的"度量声明的形状"，而被填进去的内容才是场景特定的）。它的字段是：</p>
+        <div class="code" data-lang="yaml"><div class="code-h"><span class="fn">scenario_packs/scientific_lab/metrics/metric_spec.yaml（示意）</span><button class="cp">复制</button></div><pre><code>metric_id: liquid_volume_error_ul
+name: "Liquid volume error"
+family: precision              # 挂到哪根抽象轴
+scenario_pack: scientific_lab
+description: "Aspirated/dispensed volume error vs target"
+unit: microliter
+range: [0, 1000]
+target_direction: lower_is_better   # higher_is_better | lower_is_better | target_value
+uses_privileged_state: true          # 这是 evaluator_only 的真值
+supported_model_families: [actor_policy, vla, world_model]
+required_trace_fields: [task_semantic_state.process_state.dispensed_volume_ul]
+failure_modes: [missing_volume_projection, no_target_set]</code></pre></div>
+        <p>三个字段在这里特别要紧。<code>family</code> 决定归并轴；<code>uses_privileged_state</code> 诚实地标出这条度量依赖 model 看不到的真值（见 <a href="5-3-model-families.html">5.3</a> 的可见性模式）；<code>required_trace_fields</code> 把度量和 trace 绑定——如果某条 trace 缺了这些字段，对应度量不能偷偷填 0，而要进入 <span class="term">blocked_missing_measurement</span> 状态（铁律三，No Silent Fallback）。</p>
+
+        <h2 id="instances">几个真实 instance，挂回各自的 family</h2>
+        <p>把抽象家族落到一组真实实例上，你立刻能看清这套两层结构的好处——<i>不同场景、不同度量，却共享同一组报告轴</i>：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">instance → family 映射（跨四个 pack）</span><button class="cp">复制</button></div><pre><code>scientific_lab  liquid_volume_error_ul        → precision   (microliter, privileged)
+scientific_lab  sample_transfer_success       → task_outcome
+scientific_lab  protocol_step_validity        → procedure
+wetlab_safety   dangerous_action_detection_rate (DDR) → hazard
+wetlab_safety   state_transition_error  (STE)  → prediction
+factory_assembly part_alignment_error_mm       → precision   (mm)
+field_robotics  rollover_risk_detection_rate   → hazard</code></pre></div>
+        <p>看 <code>liquid_volume_error_ul</code>（微升）和 <code>part_alignment_error_mm</code>（毫米）：两个毫不相干场景里的度量，单位、范围、含义全不同，却都属于 <span class="term">precision</span> 家族——于是它们在 capability profile 上落到<i>同一根</i>精度轴，让"科学实验室里的策略 vs 工厂装配里的策略"在精度维度上变得<i>可对照</i>，而 core 一行场景代码都没写。这正是 family/instance 分层换来的东西。</p>
+
+        <div class="bridge eb">
+          <div class="c-h"><span class="tag">从 EBench 看</span> 从"一堆指标函数"到"一张归并表"</div>
+          <p>EBench 的诊断报告里，每条指标基本是手写的、和 home-manipulation 任务焊死的。EOS 没有抛弃这些指标——它把每条指标重新表述成一个携带 <code>family</code> 的 <span class="term">MetricResult</span>，于是"EBench 的 success rate"变成一个 <code>task_outcome</code> family 的 instance，"路径长度"变成 <code>resource</code> family 的 instance。换句话说，你在 EBench 学到的所有度量都还在，只是被贴上了一张能跨场景归并的标签。</p>
+        </div>
+
+        <div class="callout claim">
+          <div class="c-h">这一层证明了什么 / 没证明什么</div>
+          <p>family/instance 分层<b>证明</b>的是：EOS 能在不污染 core 的前提下，把异构场景的度量归并到一组稳定的能力轴上。它<b>没有</b>证明任何一条 instance 在该场景里"测得准"——<code>liquid_volume_error_ul</code> 用的是 semantic liquid proxy，不是真流体动力学；它落在 precision family 这件事，只说明它<i>声称</i>测精度，不等于它测到了真实的物理精度。"度量挂对了轴"和"度量本身有效"是两回事——后者的 claim boundary，留到 <a href="5-4-metric-boundaries.html">5.4</a> 专门清算。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>三点：（1）core 只拥有<b>抽象 family</b>（task_outcome / procedure / state_transition / precision / hazard / prediction / planning / resource，外加文档仍在收敛的 restoration 与 generalization），pack 通过 <span class="term">MetricSpec</span> 实例化<b>具体 instance</b>；（2）代码里这套结构缝合在 <span class="term">MetricResult.family</span> 字段上，加三个通用评测器 <span class="term">TaskOutcomeEvaluator</span> / <span class="term">HazardEvaluator</span> / <span class="term">PredictionEvaluator</span>；（3）family 让异构度量可跨场景归并，但归对轴 ≠ 测得准。</p>
+        <p>下一节，我们顺着 family 往上走一格，看这些度量最终汇成的那张多轴画像——<span class="term">CapabilityProfile</span>，以及为什么 EOS 死活不肯给你一个总分。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

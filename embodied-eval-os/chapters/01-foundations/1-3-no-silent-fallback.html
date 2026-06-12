@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>No silent fallback：缺证据就是 blocked · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="1-3">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 1 · The Big Ideas · 1-3</div>
+        <h1>No silent fallback：缺证据就是 blocked</h1>
+        <p class="lede">上一节防的是"把窄结论说成宽结论"。这一节防的是更阴险的一种：当某个测量<i>根本没拿到</i>时，代码偷偷塞一个默认值替你"圆场"——返回 <code>0.0</code>、空列表、<code>success=true</code>。这种"静默回退"会把<b>缺失</b>伪装成<b>结果</b>，是证据的头号污染源。EOS 的对策斩钉截铁：缺证据，就显式记成 <span class="term">blocked</span>，绝不填 0。</p>
+
+        <h2 id="the-trap">静默回退：把"没测到"伪装成"测到了"</h2>
+        <p>想象一段再自然不过的防御式代码：某个力向量没取到，于是 <code>force = data.get("contact_force", 0.0)</code>；某个评估器没跑成，于是 <code>return {"success": True}</code> 让流水线别中断。它们看起来很"健壮"——程序不会崩。但代价是灾难性的：一个<b>缺失的测量</b>，被悄悄换成了一个<i>看起来正常</i>的数字，然后这个数字流进报告、参与聚合、被当作证据。读到报告的人无从知道这个 0 是"真的测到了 0"还是"根本没测到"。</p>
+        <p>EOS 把这类行为统称为 <span class="term">silent fallback</span>，并把它列为绝对禁止。它列出了一串<b>绝不允许</b>出现的"默认圆场值"：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">No Silent Fallback Policy — 禁止的回退</span><button class="cp">复制</button></div><pre><code>缺测量时，绝不偷偷变成：
+  0.0        []        {}
+  success=true          score=1.0
+  default pass          隐式实跑（silently running for real）</code></pre></div>
+
+        <h2 id="explicit-blocked">缺证据要变成一个显式状态</h2>
+        <p>取代静默回退的，是一组<b>显式</b>的缺失状态——它们诚实地说"这里没有证据，以及为什么没有"：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">显式缺失状态（择要）</span><button class="cp">复制</button></div><pre><code>blocked_missing_measurement     blocked_missing_state
+blocked_missing_artifact        blocked_invalid_action
+blocked_control_rejected        blocked_provider_unavailable
+blocked_optional_dependency     unsupported     not_evaluated</code></pre></div>
+        <p>区别非常实在：<code>0.0</code> 会被下游当成一个真实读数参与平均，而 <span class="verdict blocked">blocked_missing_measurement</span> 不会——它从分子里退出，只在"有多少轴被 block"的计数里留痕。每一种 <code>blocked_*</code> 还携带了<i>原因</i>：是动作非法（<code>blocked_invalid_action</code>）、是 control 拒了（<code>blocked_control_rejected</code>）、还是某个 provider 根本没起来（<code>blocked_provider_unavailable</code>）。这样一来，"没测到"不再是一个谎，而是一条可追查的线索。下面这个部件让你左右对照同一个缺测量场景，看"填 0" 与 "标 blocked" 在报告里造成的完全不同的后果。</p>
+
+        <div class="lab">
+          <div class="lab-h"><span class="lab-tag">interactive</span><span class="lab-t">no silent fallback：填 0/success=true vs 显式 blocked_*</span></div>
+          <div class="lab-body" data-widget="no-silent-fallback"></div>
+          <div class="lab-cap">切换"静默回退"与"显式 blocked"两种处理。看同一个缺测量如何在前者里污染分数、在后者里被诚实地从分母外计数。这正是为什么 EOS 的报告永远带分母。</div>
+        </div>
+
+        <h2 id="denominators">报告带分母与逐轴状态</h2>
+        <p>显式状态只有配上<b>分母</b>才有意义。EOS 的报告从不只给一个"成功率 0.8"，而是要给出这个 0.8 是<i>多少次里的</i>、其余的为什么不算数。所以报告里带的是一组比率与计数，而不是孤零零的标量：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">报告里的逐轴状态（择要）</span><button class="cp">复制</button></div><pre><code>runtime_execution_rate        model_action_valid_rate
+control_acceptance_rate       projection_ready_rate
+evaluator_pass_rate           render_capture_rate
+artifact_linkage_failures     blocked_* counts</code></pre></div>
+        <p>读这种报告的方式变了：你不是看一个数好不好看，而是看<b>分母完不完整</b>。如果 <code>projection_ready_rate</code> 只有 0.4，那么哪怕 <code>evaluator_pass_rate</code> 看着是 1.0，你也知道那是在一小撮"投影成功了的"样本上算的——大半样本根本没进入评估。这套纪律由 <span class="term">scripts/check_architecture_debt.py</span> 与 <span class="term">scripts/check_required_live_lanes.py</span> 在 CI 里强制执行：缺了该有的 lane、或者出现了可疑的"满分无分母"，就会被拦下。</p>
+
+        <div class="bridge ev">
+          <div class="c-h"><span class="tag">从评测科学 看</span> 一个缺失的测量，不是一个零</div>
+          <p>这在测量理论里是常识级的区分：<b>missing data 不等于 zero</b>。把"未观测"当作"观测到了 0"，是统计学里典型的错误——它会让你的均值、你的方差、你的结论全部失真，因为你把"我不知道"伪造成了"我知道，而且是 0"。一个没测到的接触力，既不是 0 牛，也不是任何值；它是一个空集，必须以"缺失"的身份参与（或不参与）后续计算。EOS 的 <code>blocked_*</code> 状态，本质就是把"缺失"作为一等公民编码进 trace，而不是让它在某个 <code>.get(key, 0.0)</code> 里被悄悄抹成一个数。把缺失当零，是在给自己的证据注水。</p>
+        </div>
+
+        <h2 id="examples">几个真实的落地点</h2>
+        <p>这条纪律不是口号，它在仓库里有很多咬合点。Path B 的 live model loop（<a href="../06-runtime/6-3-live-loop.html">6.3</a>）一旦拿不到 pre/post 的状态投影，就走 <span class="term">_finalize_blocked_loop()</span>，把原因记进 <code>blocking_reasons</code>，<b>不</b>给这个 episode 编一个假的成功。科学实验室 pack 里，缺一个力向量被明确定义为 <i>blocker / coverage limit</i>，"<b>不是 false negative，不许填 0</b>"。判定词汇里也专门留了 <span class="verdict blocked">blocked_with_evidence</span> 这一档，让"被挡住但有据可查"区别于"判为不匹配"。</p>
+
+        <div class="callout warn">
+          <div class="c-h">最常见的伪装</div>
+          <p>最危险的静默回退往往穿着"健壮性"的外衣：<code>try/except</code> 里默默吞掉异常返回默认值、<code>dict.get(k, 0.0)</code>、为了让 pipeline 不中断而 <code>return success=True</code>。它们不会让你的代码崩——它们让你的<b>证据</b>崩。在 EOS 里，宁可让流水线在这一轴上显式 <code>blocked</code>、报告少一格，也绝不用一个编造的数把缺口糊上。</p>
+        </div>
+
+        <div class="callout claim">
+          <div class="c-h">这一节的边界声明</div>
+          <p>No silent fallback <b>能</b>保证：报告里出现的每个数字都是<i>真的测到的</i>，缺失被显式编码为 <code>blocked_*</code> 并带原因与分母，从而无处藏身。它<b>不能</b>保证：被记录下来的那些 <code>blocked_*</code> 会减少——一条诚实但满是 blocker 的 trace，仍然是一条<i>覆盖很差</i>的 trace。这条纪律消灭的是"假装有证据"，而不是"缺证据"本身；它让你的报告变诚实，不会让它变好看。一个写满 blocked 的报告，是一个诚实地承认"我还测不到"的报告。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>记住这条非黑即白的纪律：缺测量时，<b>绝不</b>偷偷返回 <code>0.0 / [] / success=true / 默认通过</code>；<b>必须</b>变成显式的 <code>blocked_missing_measurement / blocked_control_rejected / unsupported / not_evaluated</code> 等状态，并带上原因。报告永远带<b>分母与逐轴状态</b>（execution/action_valid/control_acceptance/projection_ready/evaluator_pass/render_capture rate 与 blocked_* counts），由 <code>check_architecture_debt.py</code> 等脚本强制。评测科学的一句话作底：<b>一个缺失的测量不是一个零。</b></p>
+        <p>这一节和上一节合起来，是 EOS 对"证据诚实"的两面防守。下一节，我们转向另一条铁律——空间上的诚实：<b>不污染 core</b>，把领域语义与外来概念关在它们该待的地方。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

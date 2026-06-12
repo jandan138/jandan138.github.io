@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>术语表 Glossary · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="a-1">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Appendix · Reference · a-1</div>
+        <h1>术语表 Glossary</h1>
+        <p class="lede">这本书塞了很多英文术语——这是故意的：架构名、类名、状态名、claim 词汇都该保留原文，方便你回头对照代码和设计文档。这一页把它们集中起来，每个一行中文释义。按主题分组，随手查。术语首次出现处可顺着正文链接回去看上下文。</p>
+
+        <h2 id="identity">项目定位</h2>
+        <table>
+          <thead><tr><th>术语</th><th>一行释义</th></tr></thead>
+          <tbody>
+            <tr><td><span class="term">EOS</span> / EmbodiedEval OS</td><td>a domain-agnostic, backend-composable evaluation OS for embodied intelligence——比 benchmark 高一层的具身评测操作系统。</td></tr>
+            <tr><td><span class="term">scenario pack</span></td><td>装某个领域语义（任务/资产/过程原语/度量/协议）的可插拔包；不改 core 抽象。home_manipulation、scientific_lab 等都是 pack。</td></tr>
+            <tr><td><span class="term">adapter</span> / anti-corruption layer</td><td>把被导入的外部 benchmark（EBench、AutoBio…）接进来的防腐层；不得反向塑造 core API。</td></tr>
+            <tr><td><span class="term">claim boundary</span></td><td>EOS 签名概念：每个结果都要写明"证明了什么 / 不能证明什么"。semantic proxy ≠ real CFD，compatibility smoke ≠ full reproduction。</td></tr>
+            <tr><td><span class="term">no-silent-fallback</span></td><td>缺证据要变成显式 <code>blocked_*</code> 状态，绝不许默默填 0 / [] / success=true。</td></tr>
+          </tbody>
+        </table>
+
+        <h2 id="layers">L0–L6 分层与状态</h2>
+        <table>
+          <thead><tr><th>术语</th><th>一行释义</th></tr></thead>
+          <tbody>
+            <tr><td><span class="term">L0–L6</span></td><td>分层栈：L0 Resource/Asset → L1 EvaluationWorldSpec → L2 WorldSession → L3 RuntimeMeasurementSnapshot → L4 PhysicalStateProjection → L5 TaskSemanticState → L6 Evidence Ledger / EpisodeTrace。</td></tr>
+            <tr><td><span class="term">WorldSession</span> (L2)</td><td>live runtime 的 session 信封（lifecycle/clock/channels/control/sensors/artifact refs）；在 <code>runtime/</code>，不在 core；不是 USD clone，不拥有 per-step state。</td></tr>
+            <tr><td><span class="term">RuntimeMeasurementSnapshot</span> (L3)</td><td>measured/exported 的跨后端证据边界；immutable、artifact-backed、capability-scoped；不保证完整/可恢复/可独立比较。</td></tr>
+            <tr><td><span class="term">PhysicalStateProjection</span> (L4)</td><td>backend-normalized、simulator-neutral 的物理投影；字段含 time_s/robots/objects/joints/contacts。State V2 名（原 CanonicalPhysicalState）。</td></tr>
+            <tr><td><span class="term">TaskSemanticState</span> (L5)</td><td>场景拥有的语义/过程状态（process/procedure/hazard 字段）；core 只存 schema-validated payload，不知字段名。原 TaskWorldState。</td></tr>
+            <tr><td><span class="term">PredictedFuture</span></td><td>世界模型的预测产物：horizon_s + 预测的 semantic/physical state/observation + success_probability + risk_scores。</td></tr>
+            <tr><td><span class="term">State V2</span></td><td>一次硬改名重构：把 CanonicalPhysicalState→PhysicalStateProjection 等；active API 用 V2，V1 只经迁移模块读，legacy key 会被 from_dict 拒绝。</td></tr>
+          </tbody>
+        </table>
+
+        <h2 id="trace">Trace 与证据</h2>
+        <table>
+          <thead><tr><th>术语</th><th>一行释义</th></tr></thead>
+          <tbody>
+            <tr><td><span class="term">EpisodeTrace</span> (L6)</td><td>一次 episode 的证据 artifact：episode/task/pack id、backend_components、versions、privileged_state_policy、claim_boundary、steps、episode_metrics。</td></tr>
+            <tr><td><span class="term">TraceStep</span></td><td>trace 的一步：observation/action/physical_state_projection/task_semantic_state/prediction/metric_results + privileged_state_visible_to_model。</td></tr>
+            <tr><td><span class="term">TraceStore</span></td><td>core recorder，把 trace 序列化成 JSON（<code>save_json</code>）。</td></tr>
+            <tr><td><span class="term">judgeable loop</span></td><td>把后端分叉变成完全记账的账本（fairness gates → 物理 verdict）；verdict 词汇 matched/mismatched/blocked_with_evidence/not_compared。</td></tr>
+            <tr><td>privileged state</td><td>特权状态（native dump/solver diagnostics/evaluator 真值）；默认不进模型输入，仅 evaluator/recorder 可见。</td></tr>
+          </tbody>
+        </table>
+
+        <h2 id="backend">后端与组合</h2>
+        <table>
+          <thead><tr><th>术语</th><th>一行释义</th></tr></thead>
+          <tbody>
+            <tr><td><span class="term">BackendProfile</span></td><td>frozen dataclass：profile_id + 六组件（platform/physics/renderer/control/process_runtime/sensors），方法 component_summary()。</td></tr>
+            <tr><td><span class="term">ComponentProfile</span></td><td>单个组件的描述：name/component_type/version/capabilities/metadata。</td></tr>
+            <tr><td>六组件</td><td>platform / physics / renderer / sensors / control / process runtime——后端永远拆成这六格，不许只说"Isaac"。</td></tr>
+            <tr><td><span class="term">CapabilityTier</span></td><td>组件能力档：NATIVE / REDUCED / SEMANTIC_PROXY / EMULATED / UNSUPPORTED。</td></tr>
+            <tr><td>capability registry vs readiness ledger</td><td>registry = 静态声明"打算支持什么"；ledger = 这一次实际测到/产出/被 block/失败什么。账本不是分数。</td></tr>
+            <tr><td>axis-level status</td><td>账本逐轴状态：exact/approximate/partial/read_only/write_only/opaque_only/unsupported/blocked。</td></tr>
+            <tr><td><span class="term">semantic proxy</span></td><td>用 reduced 语义模型代替真实物理（如 reduced liquid model）；不声称真物理保真。</td></tr>
+          </tbody>
+        </table>
+
+        <h2 id="runtime">Runtime 与 facade</h2>
+        <table>
+          <thead><tr><th>术语</th><th>一行释义</th></tr></thead>
+          <tbody>
+            <tr><td><span class="term">RPF</span> (Runtime Provider Facade)</td><td>借 MetaSim 工程外形的 provider facade，但不接受"一 handler 一 backend / handler state 物理可比"的含义。</td></tr>
+            <tr><td>八动词 (8 verbs)</td><td>materialize / reset / apply_state / apply_control / step / measure / query / close；前七个驱动一次 run。</td></tr>
+            <tr><td><span class="term">EpisodeRunner</span></td><td>评测路径 A（简单 in-process）：装 backend+model+spec，run(seed)→EpisodeTrace；强制写六组件。</td></tr>
+            <tr><td><span class="term">WR</span> (WorldState Runtime)</td><td>核心架构 epic（WR-1…WR-8H）；立 L0–L6、把 pickup 任务降级为 regression scenario、引入 paired dynamic trace。</td></tr>
+            <tr><td><span class="term">ERF</span> (Embodiment Runtime Foundation)</td><td>本体运行时地基（ERF-0…6）；显式<i>不是</i> universal Robot class。</td></tr>
+            <tr><td><span class="term">EVL</span> (Visual Model Evaluation Lane)</td><td>当前前沿：RGB 帧证据 + HTTPPolicyAdapter sidecar + visual_manipulation_micro + 10-episode 诊断 suite。</td></tr>
+          </tbody>
+        </table>
+
+        <h2 id="metrics-models">度量、报告与模型</h2>
+        <table>
+          <thead><tr><th>术语</th><th>一行释义</th></tr></thead>
+          <tbody>
+            <tr><td><span class="term">MetricResult</span></td><td>一条度量结果：name/value/family/unit/details。EpisodeResult 聚合一组 MetricResult。</td></tr>
+            <tr><td>metric family</td><td>core 定义的抽象族：task_outcome/procedure/state_transition/precision/hazard/prediction/planning/resource(+restoration/generalization)。pack 实例化具体 metric。</td></tr>
+            <tr><td><span class="term">Evaluator</span></td><td>ABC：evaluate_step / evaluate_episode(trace)→EpisodeResult。具体如 TaskOutcomeEvaluator/HazardEvaluator/PredictionEvaluator。</td></tr>
+            <tr><td><span class="term">CapabilityProfile</span></td><td>多轴报告类型（task/procedure/precision/hazard/prediction/planning/generalization/resource），避免单标量。</td></tr>
+            <tr><td><span class="term">ModelAdapter</span></td><td>模型契约 ABC：reset/act(必)/predict_future/rank_plans/assess_safety。现有 random/scripted/http policy。</td></tr>
+            <tr><td>五条能力轴</td><td>task execution / world prediction (WAM) / safety reasoning / generalization / planning usefulness。</td></tr>
+          </tbody>
+        </table>
+
+        <h2 id="claims">Claim 与硬仗</h2>
+        <table>
+          <thead><tr><th>术语</th><th>一行释义</th></tr></thead>
+          <tbody>
+            <tr><td>release claim levels</td><td>由窄到宽：contract implemented → fixture conformance → live SDK lane → scenario evaluator → suite diagnostic → release live gate；不许跳级。</td></tr>
+            <tr><td>Forbidden Claim Catalog</td><td>未配证据不得用的词：backend/trajectory/force parity、pixel parity、official benchmark reproduction、hardware readiness、real-world safety、MetaSim compatibility…</td></tr>
+            <tr><td><span class="term">faithful_reproduction_not_approved</span></td><td>AutoBio 复现清算的判定：roadmap 完成<i>不等于</i> faithful reproduction 或官方全链执行。</td></tr>
+            <tr><td>contract closure vs outcome closure</td><td>关一个"证据链存在" vs 关一个"真实结果成立"——两者必须分清。</td></tr>
+            <tr><td>AX-1</td><td>近期活跃架构 cutover/cleanup（见近期 git commit）。</td></tr>
+            <tr><td>WWSB</td><td>wetlab_safety pack 对应的 wet-lab safety benchmark（负样本 ≥60%，hazard levels 0–5）。</td></tr>
+          </tbody>
+        </table>
+
+        <h2 id="more">还想要更密的速查</h2>
+        <p>这一页给的是"一行释义"。如果你要的是表格化的对照——六组件全表、八动词时序、claim levels 阶梯、core 禁词清单——直接翻 <a href="a-3-cheatsheet.html">a-3 速查表</a>；想知道某个类住在仓库哪个目录，翻 <a href="a-2-repo-map.html">a-2 仓库地图</a>。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

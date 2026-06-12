@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>L0–L6 分层：从资源到证据账本 · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="3-1">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 3 · Trace &amp; State · 3-1</div>
+        <h1>L0–L6 分层：从资源到证据账本</h1>
+        <p class="lede">前两部分你把 EOS 的<b>身份</b>（高一层的评测 OS）和它的<b>后端组合学</b>（六个可替换组件）摸清楚了。但有一个问题被刻意推迟到了这里：当一台仿真器真的跑起来、世界每一步都在变，这些「状态」到底<i>住在哪</i>、<i>归谁所有</i>、谁有资格把它当成证据？EOS 给出的答案是一条七层的脊柱——<span class="term">L0</span> 到 <span class="term">L6</span>，从一块静态资源，一路走到可审计的证据账本。这一节先把这根脊柱立起来。</p>
+
+        <h2 id="why-layers">为什么要分层，而不是一坨「world state」</h2>
+        <p>一个自然但危险的想法是：让仿真器直接吐出一个「当前世界状态」，评测器拿去打分就完事了。这正是大多数 benchmark 的做法，也正是 EOS 拒绝的做法。原因是：当你想<i>跨后端比较</i>时，「世界状态」这个词会在不知不觉间偷换三件互相独立的东西——它是谁拥有的、它用什么格式装载、它背后的真相由谁产生。把它们混成一坨，结论就站不住。</p>
+        <p>EOS 的处理方式是把整条从「资源」到「证据」的路径切成七层，每一层只负责一件事，并且<b>明确归属</b>——哪些在 <span class="term">core/</span>，哪些在 <span class="term">runtime/</span>，哪些归 scenario pack。下面这个探索器，你可以逐层点开看每一层的职责与归属：</p>
+
+        <div class="lab">
+          <div class="lab-h"><span class="lab-tag">interactive</span><span class="lab-t">L0–L6 分层探索器</span></div>
+          <div class="lab-body" data-widget="layer-stack"></div>
+          <div class="lab-cap">逐层点开。注意 L2 <span class="term">WorldSession</span> 住在 runtime（不在 core），而 L4/L5 的归一化与语义才是 core 关心的契约层。</div>
+        </div>
+
+        <div class="bridge eb">
+          <div class="c-h"><span class="tag">从 EBench 看</span> 你已经见过这根脊柱的「散装版」</div>
+          <p>EBench 教程第 8 章拆过一个评测系统的解剖：<span class="term">Spec</span>（任务规格）→ <span class="term">State</span>（环境状态）→ <span class="term">Runtime</span>（执行引擎）→ <span class="term">Metric</span>（打分）→ <span class="term">Report</span>（报告）。那是一套很好的直觉骨架。EOS 做的事，就是把这套散装直觉<b>焊成一条带编号、带归属的脊柱</b>：EBench 的 Spec 对应 <span class="term">L1 EvaluationWorldSpec</span>，Runtime 对应 <span class="term">L2 WorldSession</span>，State 被拆成 L3/L4/L5 三层（下一节专门讲），Metric+Report 沉淀进 <span class="term">L6 Evidence Ledger</span>。同一套直觉，换上可审计的编号。</p>
+        </div>
+
+        <h2 id="the-seven-layers">七层，逐层看</h2>
+        <p>从下往上，每一层都建在前一层之上，但只暴露自己该暴露的东西：</p>
+        <ul>
+          <li><b>L0 Resource / Asset</b>——最底下的静态原料：网格、URDF/MJCF 文件、纹理、材质。它还不是一个「世界」，只是世界的零件。</li>
+          <li><b>L1 EvaluationWorldSpec</b>——对「要评测的那个世界」的声明式规格：放哪些资产、初始分布、观测/动作规格。它是<i>意图</i>，还没跑起来。</li>
+          <li><b>L2 WorldSession</b>——live runtime 的<i>会话信封</i>：lifecycle、clock、domain channels、control、sensors、native artifact refs、capability 声明。这是「世界真的在跑」的那一层。</li>
+          <li><b>L3 RuntimeMeasurementSnapshot</b>——从 L2 <i>测量/导出</i>出来的跨后端证据边界：immutable、artifact-backed、capability-scoped。</li>
+          <li><b>L4 PhysicalStateProjection</b>——把 L3 的原始测量<i>归一化</i>成 simulator-neutral 的物理投影。</li>
+          <li><b>L5 TaskSemanticState</b>——场景<i>拥有</i>的语义层：process / procedure / hazard / evaluator 字段。</li>
+          <li><b>L6 Evidence Ledger / EpisodeTrace</b>——把上面一切沉淀成可审计的证据账本，也就是 <a href="3-3-episode-trace.html">3.3</a> 要解剖的 <span class="term">EpisodeTrace</span>。</li>
+        </ul>
+        <p>L3 → L4 → L5 这三层是「<span class="term-i">归一化三步</span>」：raw/measured → simulator-neutral → 场景语义，下一节 <a href="3-2-state-layers.html">3.2</a> 会逐字对照代码讲清楚。这一节先把更隐蔽、也更容易被问错的东西讲透——L2 到底是什么。</p>
+
+        <h2 id="three-axes">三轴解耦：别问「USD 是不是那个活的世界」</h2>
+        <p>EOS 架构记录里（<span class="term">l2-l3-layering-clarification</span>）有一个堪称定海神针的洞察：很多关于「状态住在哪」的争论，其实是把三条<b>互相正交</b>的轴搅在了一起。把它们分开，问题就消解了：</p>
+        <ol>
+          <li><b>layer ownership（层归属）</b>——L0–L6，谁拥有这层语义。这是<i>组织</i>问题。</li>
+          <li><b>interchange format（交换格式）</b>——USD 还是 MJCF？这是<i>装载格式</i>问题。</li>
+          <li><b>runtime truth（运行时真相）</b>——MuJoCo / Genesis / PhysX / 真实世界，谁产生了这一步的物理真相。这是<i>真相来源</i>问题。</li>
+        </ol>
+        <p>一旦三轴分开，「USD 是不是那个活的世界？」就立刻显出它是个<b>错问题</b>：USD 只是一种 interchange format（轴二），它既不决定层归属（轴一），也不决定谁产生了运行时真相（轴三）。你完全可以用 USD 描述一个由 MuJoCo 产生真相的世界，也可以用 MJCF 描述一个由 PhysX 跑的世界。问「USD 是不是活的」，等于把格式问题误当成真相问题。</p>
+
+        <div class="bridge sm">
+          <div class="c-h"><span class="tag">从物理后端 看</span> 同一个 task，三引擎三个真相</div>
+          <p>把三轴摆开，跨引擎差异就有了正确的坐标系。同一个 <span class="term">L1 EvaluationWorldSpec</span>（轴一固定）、可以用同一份 USD 资产（轴二固定），但在 MuJoCo 上跑和在 Genesis 上跑（轴三不同），接触求解、穿透、稳定化各不相同——这是真实的、有据可查的引擎差异（SimBenchmark、cloth-manipulation benchmark 都量过：quasi-static 大家都准，dynamic 没有引擎能精确互相匹配）。EOS 的北极星因此是：<i>「在同一套 task 与证据规则下，不同 physics 后端产生的结果，可以被测量、投影、比较、审计，而不过度宣称。」</i> 三轴解耦正是让这句话可执行的前提。</p>
+        </div>
+
+        <h2 id="worldsession">L2 WorldSession：USD-covering，不是 USD-shaped</h2>
+        <p>L2 <span class="term">WorldSession</span> 是这根脊柱上最容易被误解的一环，值得单独说清三件事。</p>
+        <p><b>第一，它是会话信封，不是世界本体。</b>WorldSession 持有的是 lifecycle、clock、domain channels、control、sensors、对 native artifact 的引用、以及这个后端宣称的 capability。它<i>不</i>是 USD 场景的克隆，也<i>不</i>是逐步状态（per-step state）的拥有者——逐步的物理证据归 L3/L4，语义归 L5。</p>
+        <p><b>第二，它「USD-covering，不是 USD-shaped」。</b>这句话的意思是：WorldSession 的接口要能<i>覆盖</i>一个 USD 级别世界所需的能力（生命周期、时钟、控制、传感、原生产物引用），但它的形状<i>不</i>由 USD 的数据模型决定。它不是「USD 的一个薄包装」；一个完全不用 USD 的后端（比如纯 MJCF 的 MuJoCo provider）一样能填满这个信封。把接口绑死到 USD 的形状，等于让一种 interchange format 反塑了 core——这正是 <a href="../01-foundations/1-4-core-boundaries.html">铁律二</a>禁止的事。</p>
+        <p><b>第三，它住在 <span class="term">runtime/</span>，不在 core。</b>这是个有意的归属决定：core 只关心<i>契约</i>（L1 的规格、L4 的投影 schema、L5 的语义 payload、L6 的证据结构）。「世界正在某个具体后端上活着」这件事是 runtime 的职责，所以 WorldSession 的代码落在 <span class="term">src/embodied_eval_os/runtime/</span>。这样 core 就永远不必知道任何一个具体仿真器是怎么管理它的会话的。</p>
+
+        <div class="callout claim">
+          <div class="c-h">这套分层证明了什么 · 不证明什么</div>
+          <p>L0–L6 分层<b>证明</b>的是：EOS 有能力把「资源 / 规格 / 会话 / 测量 / 投影 / 语义 / 证据」这七件事各自归位、各自可审计，从而让跨后端比较有一个干净的坐标系。它<b>不</b>证明任何两个后端的物理是等价的——分层只是让差异<i>可被定位到某一层、某一轴</i>，差异本身仍是证据（见 <a href="../07-hard-problems/7-2-worldstate-runtime.html">7.2</a> 的 first-divergence 诊断），而<i>不是</i> parity claim。一句话：分层让你能诚实地说「它们在 L4 的 contact_force 上分叉」，但它从不让你说「它们一样」。</p><!-- xref-fixed -->
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>三件事：（1）EOS 把从资源到证据的路径切成 <span class="term">L0–L6</span> 七层，每层只管一件事、且明确归属——L2 在 runtime，L4/L5/L6 的 schema 才是 core 的契约；（2）<b>三轴解耦</b>——layer ownership / interchange format / runtime truth 互相正交，所以「USD 是不是活的世界」是个错问题；（3）L2 <span class="term">WorldSession</span> 是<i>会话信封</i>，「USD-covering 而非 USD-shaped」，不拥有逐步状态、也不让任何格式反塑 core。</p>
+        <p>下一节，我们钻进这根脊柱的中段——L3 → L4 → L5 三层状态，看一个 <code>qpos</code> 向量如何从「某后端测出来的原始数」一路变成「场景才认得的 <code>finger_cap_contact</code>」，以及为什么这必须是三层、而不能压成一层。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

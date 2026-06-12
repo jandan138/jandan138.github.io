@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>不污染 core：契约 vs 领域语义 · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="1-4">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 1 · The Big Ideas · 1-4</div>
+        <h1>不污染 core：契约 vs 领域语义</h1>
+        <p class="lede">前两节守的是证据的诚实，这一节守的是<b>架构</b>的诚实。EOS 之所以能号称 domain-agnostic，全靠一条空间纪律：<span class="term">src/embodied_eval_os/core/</span> 里只放<i>场景中立的契约</i>，绝不放任何领域语义或外来 benchmark 的概念。这条线不是靠口头约定，而是靠一个会让 CI 变红的脚本守着——而且它比文档列的禁词表还要<b>严</b>。</p>
+
+        <h2 id="three-tiers">三层放置：契约 / 语义 / 外来概念</h2>
+        <p>EOS 把所有概念分进三个层，每个概念都必须能回答"我属于哪一层"：</p>
+        <ul>
+          <li><b>core = 契约（contracts）</b>：场景中立的抽象。它知道"有一种东西叫 task、有一种东西叫 metric family、有一种东西叫 process primitive"，但<i>不知道</i>任何具体场景的名字。</li>
+          <li><b>scenario_packs/ = 场景语义</b>：pipette、hazard taxonomy、conveyor 这类领域语义都住在这里，它们 subclass core 的抽象、消费 core 的投影，但不改 core。</li>
+          <li><b>adapters/ = 外来 benchmark 概念</b>：被导入的 EBench / AutoBio 概念关在这里，作为<b>anti-corruption layer</b>（防腐层）把外部世界翻译成 core 契约。</li>
+        </ul>
+        <p>判断一个概念该进哪层，核心问句是："它是<i>场景中立的契约</i>，还是<i>某个场景/某个 benchmark 的语义</i>？" 前者进 core，后者出 core。</p>
+
+        <h2 id="forbidden-names">那张禁词表</h2>
+        <p>为了让"出 core"有牙齿，core-boundaries.md §3 列了一张权威的禁词超集（35+ 个），凡是带这些名字的类名或 import，都不许出现在 core：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">docs/design/core-boundaries.md §3（节选）</span><button class="cp">复制</button></div><pre><code>EBench  GenManip  Lift2  Isaac41  IsaacSim  AutoBio  R5A
+MJCF  MuJoCo  OpenPI  RDT  EvalClient
+Lab  WetLab  Pipette  Centrifuge  TubeRack  Contamination
+PCRPlate  VortexMixer
+RobotRuntime  EmbodimentRuntime  RobotState  EmbodimentState
+CanonicalRobotState  UniversalController  ControlStack
+HardwareReady  SafeRobot  URDF  SAPIEN  PhysX  qpos  qvel
+（以及 benchmark 专属的 Expert 类）</code></pre></div>
+        <p>注意这张表里既有外来 benchmark 名（EBench、GenManip、AutoBio），有引擎/格式名（MuJoCo、MJCF、PhysX、URDF、SAPIEN），有场景语义（Pipette、Centrifuge、Contamination），<b>也有看似中立其实危险的"伪通用"名</b>——比如 <code>UniversalController</code>、<code>CanonicalRobotState</code>、<code>RobotRuntime</code>。它们被禁，是因为"通用机器人状态""通用控制器"这种说法本身就是一种过度承诺（universal robot state 也在 <a href="../01-foundations/1-2-claim-boundary.html">1.2</a> 的 Forbidden Claim Catalog 里）。甚至 <code>qpos</code> / <code>qvel</code> 作为<i>核心 API 名</i>也被禁——它们只能作为 <span class="term">PhysicalStateProjection</span> 里的投影<i>字段值</i>出现，不能升格成 core 的接口名。</p>
+
+        <h2 id="checker">check_core_leakage.py：比文档还严</h2>
+        <p>真正在 CI 里站岗的，是 <span class="term">scripts/check_core_leakage.py</span>。它扫描 <code>core/**/*.py</code> 的源文本，命中任一禁词模式（大小写不敏感）就返回非零、让检查失败。值得强调的是：<b>这个脚本比 CLAUDE.md 里那张短表更严</b>——它额外禁掉了 <code>mujoco</code>、<code>isaac_sim</code>、<code>openpi</code> 这些以小写子串形式出现的引擎/模型名：</p>
+        <div class="code" data-lang="python"><div class="code-h"><span class="fn">scripts/check_core_leakage.py（禁词模式，节选）</span><button class="cp">复制</button></div><pre><code>FORBIDDEN_PATTERNS = [
+    ForbiddenPattern("ebench",    _contains_pattern("ebench")),
+    ForbiddenPattern("genmanip",  _contains_pattern("genmanip")),
+    ForbiddenPattern("isaac_sim", _contains_pattern("isaacsim", "isaac_sim", "isaac sim")),
+    ForbiddenPattern("mujoco",    _contains_pattern("mujoco", "mu_joco")),
+    ForbiddenPattern("openpi",    _contains_pattern("openpi", "open_pi")),
+    ForbiddenPattern("pipette",   _word_pattern("pipette")),
+    ForbiddenPattern("contamination", _word_pattern("contamination")),
+    # ... ebench / genmanip / lift2 / isaac41 / autobio / r5a / mjcf /
+    #     rdt / evalclient / lab / wet_lab / centrifuge / tube_rack /
+    #     pcr_plate / vortex_mixer ...
+]</code></pre></div>
+        <p>两种匹配器分工不同：<code>_contains_pattern</code> 用<b>子串</b>命中（任何地方出现 <code>mujoco</code> 都算），而 <code>_word_pattern</code> 用<b>词边界</b>命中（避免把 <code>lab</code> 误伤进 <code>collaborate</code> 这类无辜的词）。<code>ROOT</code> 写死成 <code>src/embodied_eval_os/core</code>——它只盯核心，scenario_packs 和 adapters 里出现这些词是<i>合法</i>的，那正是它们该待的地方。</p>
+
+        <div class="callout note">
+          <div class="c-h">为什么 scenario_packs 里写 pipette 反而对</div>
+          <p>leakage checker 只扫 <code>core/</code>。<span class="term">scenario_packs/scientific_lab/process_primitives/pipette_proxy.py</span> 里满篇 <code>pipette</code> 是完全正确的——领域语义就该住在 pack 里。错的是把 <code>core.PipettePrimitive</code> 写进核心。同一个词，在 pack 里是<b>正确归位</b>，在 core 里是<b>污染</b>。</p>
+        </div>
+
+        <h2 id="entry-test">Core Entry Test：一个概念凭什么进 core</h2>
+        <p>禁词表是"反向"防线（这些名字别进来），还需要一条"正向"准入测试：一个概念能进 core，<b>当且仅当</b>它对以下至少一项有用——</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">Core Entry Test</span><button class="cp">复制</button></div><pre><code>对 ≥2 个 scenario packs 有用，或
+对 ≥2 个 backend profiles 有用，或
+对 ≥2 个 model families 有用，或
+今天服务 1 个场景 + 文档化的第二个 roadmap 场景。
+否则 → 留在 pack / adapter。</code></pre></div>
+        <p>这条测试的精神是："只为<i>一个</i>场景服务的东西，没资格进核心。" 核心的价值正在于<i>复用</i>——能被两个以上场景/后端/模型族共享的抽象，才配当契约。所以 core 允许 <span class="term">TaskSpec</span> / <span class="term">BackendProfile</span> / <span class="term">MetricSpec</span> / <span class="term">InteractionPrimitive</span> / <span class="term">EpisodeTrace</span> 这类名字（它们对所有场景通用），却把 <code>PipettePrimitive</code> 挡在门外（它只对一个场景有用）。下面的部件让你亲手把一堆概念拖进 core / pack / adapter 三个桶——拖错的瞬间，leakage checker 会把它标红。</p>
+
+        <div class="lab">
+          <div class="lab-h"><span class="lab-tag">interactive</span><span class="lab-t">core placement：把概念放对地方，leakage checker 替你把关</span></div>
+          <div class="lab-body" data-widget="core-placement"></div>
+          <div class="lab-cap">把 TaskSpec、PipettePrimitive、GenManipRuntime、EpisodeTrace… 拖进 core / scenario_pack / adapter。拖错进 core 的禁词会被标红——这正是 check_core_leakage.py 在 CI 里做的事。</div>
+        </div>
+
+        <h2 id="anti-corruption">防腐层与依赖方向</h2>
+        <p>adapters 是<b>anti-corruption layer</b> 这个概念（来自领域驱动设计）的字面实践：外部系统（EBench、AutoBio，乃至 MetaSim 这类外部 sim 抽象框架）只能<i>经过</i> adapter 接入，而且明确规定它们 <span class="term-i">do not weaken this rule</span>——不许反过来塑造 core 的 API。所以 <code>core.GenManipRuntime</code>、<code>core.Lift2Action</code>、<code>core.EBenchScore</code> 这些写法是非法的；正确的是把它们留在 <code>adapters/ebench/</code>，再翻译成 core 的通用契约（EBench task → 通用 TaskSpec、Lift2 → 一个 EmbodimentSpec、EBench score → 一个 MetricResult）。这一切的底座，是上一节地图里那条<b>绝不反向</b>的依赖箭头：<code>core ← scenario_packs / adapters / backends / model_adapters</code>，core 永不 import 它们。</p>
+
+        <div class="bridge eb">
+          <div class="c-h"><span class="tag">从 EBench 看</span> 你学过的每一个 EBench 概念，都住在 adapter 里</div>
+          <p>把你从 EBench 带来的"家当"逐个对号入座，你会发现它们<b>无一</b>进 core：GenManip 的仿真 runtime → <code>adapters/ebench/</code> 的 runtime config；Lift2 本体与它那套 action 维度 → 一个普通的 <span class="term">EmbodimentSpec</span> + adapter 里的映射；Isaac Sim 4.1 lock-in → 一个 legacy 的 <span class="term">BackendProfile</span>（<code>ebench_genmanip_legacy.yaml</code>，<code>purpose: compatibility_only</code>）；EBench 的 score schema、camera 名字、dataset layout → 全在 adapter。EOS 从 EBench 吸收的是<i>思想</i>（多轴 capability profile、client–server 接口、action chunking、train/test split、诊断报告），那些思想塑造了 core 的契约；而 EBench 的<i>具体实现细节</i>，一个字也没进 core。这就是防腐层的全部意义：要 EBench 的智慧，不要 EBench 的耦合。</p>
+        </div>
+
+        <div class="callout claim">
+          <div class="c-h">这一节的边界声明</div>
+          <p>"不污染 core" + leakage checker <b>能</b>保证：核心在<i>静态、名字层面</i>保持 domain-agnostic，没有任何场景或 benchmark 的概念硬编码进契约层。它<b>不能</b>保证：core 的抽象设计得"好"、或某个场景真的能被这套抽象优雅表达——一个名字干净但抽象错位的 core 仍可能是糟糕的。checker 拦的是<b>污染</b>，不是<b>笨拙</b>；架构判断仍要靠 Core Entry Test 和人来做。干净是底线，不是上限。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>把这条空间纪律记牢：概念三层放置——<b>core = 契约</b>、<b>scenario_packs = 场景语义</b>、<b>adapters = 外来概念（防腐层）</b>；core 里禁出现一张 35+ 词的禁词表（含 EBench/MuJoCo/Pipette，乃至伪通用的 UniversalController、core API 名 qpos/qvel）；准入靠 <b>Core Entry Test</b>（≥2 packs / profiles / model families 才配进 core）；而 <span class="term">check_core_leakage.py</span> 在 CI 里站岗，<b>比文档还严</b>（连小写 <code>mujoco / isaac_sim / openpi</code> 都禁），靠的是 <code>core ← 一切</code> 的单向依赖。</p>
+        <p>Part 1 的三条铁律到此讲完：证据高于能力面、永不过度宣称、不污染 core（外加 no silent fallback 这条贯穿纪律）。下一部分 <b>Part 2 · 后端可组合</b>，我们去拆解第三条铁律的正面——为什么一个后端不能只是一个字符串，而必须被拆成六大组件。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

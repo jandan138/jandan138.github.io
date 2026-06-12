@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>引擎众生相：Isaac / MuJoCo / Genesis / PyBullet / Newton · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="2-3">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 2 · Backend Composability · 2-3</div>
+        <h1>引擎众生相：Isaac / MuJoCo / Genesis / PyBullet / Newton</h1>
+        <p class="lede">现在你有了一套词汇：六个组件、五个 capability tier、一份可校验的 profile。这一节我们带着这套词汇走出去，看真实世界里那几个常被点名的引擎到底是什么——并且<b>拒绝</b>把它们当成一个个原子名字。Isaac、MuJoCo、Genesis、PyBullet、Newton，每一个其实都是一捆组件。看清这一点，你才会明白为什么 EOS 的 core 对它们<i>一个都不依赖</i>。</p>
+
+        <div class="bridge sm">
+          <div class="c-h"><span class="tag">从物理后端 看</span> 读这一节的正确姿势</div>
+          <p>下面每一个"引擎"都不是一个点，而是一束组件。读的时候请不停地把它拆回 <span class="term">platform / physics / renderer / sensors / control / process runtime</span>——这正是 <a href="2-1-six-components.html">2.1</a> 教你的反射动作。当有人说"我们支持 Genesis"，你应该立刻追问："Genesis 的哪个 physics solver？哪个 renderer？哪种 control 接口？" 一个引擎名字回答不了这些问题。</p>
+        </div>
+
+        <h2 id="isaac">Isaac：一个名字下其实有四样东西</h2>
+        <p><span class="term">Isaac</span> 是最容易被说成"一个后端"、却最该被拆开的例子。至少要分清四个不同层次的东西：</p>
+        <ul>
+          <li><b>Isaac Sim</b>：跑在 NVIDIA Omniverse 上的<i>全功能仿真器</i>——platform。它的世界用 <span class="term">USD</span> 描述，物理来自 <span class="term">PhysX</span>，渲染来自 <span class="term">RTX</span> 光追。</li>
+          <li><b>Isaac Lab</b>：架在 Isaac Sim <i>之上</i>的轻量机器人学习框架，取代了老的 Isaac Gym / Orbit。关键是：它现在能在同一个壳里换多种物理后端——PhysX / Warp / Newton / MuJoCo。也就是说 platform 固定为 Isaac Lab 时，physics 仍是可换的组件。</li>
+          <li><b>PhysX</b>：physics 组件本身。</li>
+          <li><b>RTX</b>：renderer 组件本身。</li>
+        </ul>
+        <p>把这四样塞进一个"Isaac"，就丢掉了 EOS 最需要的归因力。在 EOS 里你不会写"backend = Isaac"，而会写一份 profile：<code>platform: isaac_lab</code> / <code>physics: physx</code> / <code>renderer: rtx</code> / …（参见 <code>isaac_physx_rtx.yaml</code>、以及实验性的 <code>isaac_newton_experimental.yaml</code>）。</p>
+
+        <div class="bridge eb">
+          <div class="c-h"><span class="tag">从 EBench 看</span> EBench 用的是 Isaac Sim 4.1</div>
+          <p>你在 EBench 教程里跑的那套，platform 是 <span class="term">Isaac Sim 4.1</span>——<b>早于</b> 2025 年才 GA 的 Isaac Sim 5.0 / Isaac Lab 2.2。这不是细节强迫症：版本是 ComponentProfile 的一等字段，因为不同版本的 PhysX、不同版本的 USD 管线，行为可以不一样。EOS 把 EBench 这套 Isaac 4.1 栈固定在 <code>ebench_genmanip_legacy.yaml</code>（<code>purpose: compatibility_only</code>）里，正是为了把"我们是在<i>那个</i>具体版本上做的兼容"这件事钉死，而不是含糊地说"在 Isaac 上"。</p>
+        </div>
+
+        <h2 id="mujoco">MuJoCo：优化式软接触 + 两条 GPU 路径</h2>
+        <p><span class="term">MuJoCo</span>（Google DeepMind）的招牌是 <b>optimization-based 软接触</b>——它把接触当成一个优化问题求解，因此数值上格外稳定、可微友好，是机器人学习社区的常用基线。围绕它有两条重要的 GPU 路径，别搞混：</p>
+        <ul>
+          <li><b>MJX</b>：MuJoCo 3 的 JAX 实现，把仿真搬上 GPU 做大规模并行。</li>
+          <li><b>MuJoCo Warp</b>：与 NVIDIA 合作、基于 Warp 的路径，它正是<i>喂给 Newton</i> 的那一环（见下文）。</li>
+        </ul>
+        <p>在 EOS 里，MuJoCo 是迄今最"实"的一条 live 路径：RPF-7A 是第一个 fresh 的 <span class="term">MuJoCo 3.3.0</span> live provider（<code>status: executed_pass</code>，产出真实 motion_delta）。它对应的 profile 就是你在上一节读过的 <code>mujoco_autobio.yaml</code>——physics native、但 <code>interaction_dynamics</code> 那张表里接触力向量等轴大量 <code>blocked</code>。</p>
+
+        <h2 id="genesis">Genesis：多 solver 跨材质，速度数字很夸张</h2>
+        <p><span class="term">Genesis</span>（genesis-embodied-ai，2024-12 首发）是一个纯 Python 的物理平台，亮点是<b>多 solver 跨材质耦合</b>：Rigid / MPM / SPH / FEM / PBD / Stable Fluid 等多个求解器可以在同一场景里耦合，对应刚体、颗粒、流体、可变形体等不同材质。它最出圈的是性能宣称：在单张 <span class="term">RTX 4090</span> 上、Franka 机械臂场景达到 <b>43M FPS</b>，约合 <b>430,000× 实时</b>，并宣称比 Isaac Gym 快 10–80×。</p>
+        <p>但这里有一个常被夸大的点必须按实写：在 <b>v0.3</b> 时，Genesis 只有 <b>MPM + Tool solver 可微</b>——<i>不是</i>全可微。EOS 用的是 <span class="term">Genesis 0.4.4</span>，对应 profile <code>genesis_native.yaml</code>。RPF-9 把 PyBullet 和 Genesis 0.4.4 都做成了 live provider，正是为了证明 EOS 的 provider facade"不止 MuJoCo"。</p>
+
+        <h2 id="pybullet">PyBullet：轻量基线</h2>
+        <p><span class="term">PyBullet</span>（Erwin Coumans，2017 年作为 Bullet 的 Python 绑定引入，Zlib 许可）是经典的<b>轻量级开源</b>后端：安装简单、Python 友好、跨平台，长期扮演机器人仿真的"标准轻量基线"角色。它不追求最高保真，但胜在低门槛、易复现——这让它成为 EOS 做 conformance 和 live model loop 的理想起点。RPF-10 的 live model loop 就是 <b>PyBullet + scripted_demonstrator</b>（<code>privileged_state_visible_to_model: false</code>，<code>standard_model_score: null</code>）。</p>
+
+        <h2 id="newton">Newton：2026 仍是 BETA，不是 1.0</h2>
+        <p><span class="term">NVIDIA Newton</span> 是较新的开源物理引擎，由 <b>NVIDIA + Google DeepMind + Disney</b> 联合发起，托管在 Linux Foundation，Apache-2.0，构建于 <span class="term">Warp</span> + <span class="term">OpenUSD</span> 之上，并集成 <span class="term">MuJoCo Warp</span>。请准确表述其成熟度：<b>到 2026 年它仍处于 beta，不是 1.0</b>——2025-09-29 在 CoRL 以 beta 形态发布，运行在 Isaac Lab 之内。所以在 EOS 里它对应的是 <i>experimental</i> profile（<code>isaac_newton_experimental.yaml</code>），名字里就带着"实验性"的诚实。</p>
+
+        <h2 id="table">六组件对照表</h2>
+        <p>把上面几位映射回六个组件（physics / renderer 等只取代表性、最常见配置；真实 profile 以仓库 YAML 为准）：</p>
+        <table>
+          <thead><tr><th>引擎</th><th>典型 physics</th><th>典型 renderer</th><th>定位 / 成熟度</th><th>EOS 里的角色</th></tr></thead>
+          <tbody>
+            <tr><td>Isaac Sim / Lab</td><td>PhysX（Lab 可换 Warp/Newton/MuJoCo）</td><td>RTX 光追</td><td>全功能、重</td><td>EBench legacy（Isaac Sim 4.1）；<code>isaac_physx_rtx.yaml</code></td></tr>
+            <tr><td>MuJoCo</td><td>optimization-based 软接触（+MJX / Warp）</td><td>MuJoCo OpenGL renderer</td><td>稳定、可微友好</td><td>RPF-7A 首个 live，<code>mujoco_autobio.yaml</code></td></tr>
+            <tr><td>Genesis 0.4.4</td><td>Rigid/MPM/SPH/FEM/PBD 多 solver</td><td>Genesis renderer</td><td>极快（43M FPS / 4090）；v0.3 仅 MPM+Tool 可微</td><td>RPF-9 live，<code>genesis_native.yaml</code></td></tr>
+            <tr><td>PyBullet</td><td>Bullet 刚体</td><td>OpenGL/TinyRenderer</td><td>轻量基线（Zlib）</td><td>RPF-9/10 live + model loop</td></tr>
+            <tr><td>Newton</td><td>基于 Warp，集成 MuJoCo Warp</td><td>（经 Isaac Lab / RTX）</td><td><b>2026 仍 beta</b>，非 1.0</td><td>experimental，<code>isaac_newton_experimental.yaml</code></td></tr>
+          </tbody>
+        </table>
+
+        <div class="bridge sm">
+          <div class="c-h"><span class="tag">从物理后端 看</span> 为什么这些引擎在同任务上会给出不同结果</div>
+          <p>别期望换个引擎结果就一致——这是物理引擎的现实，不是 bug。接触是非光滑互补问题（NCP），每个引擎为了速度和稳定性各自做<i>不同的松弛</i>：把摩擦锥线性化成 LCP、把硬互补软化成允许少量穿透。证据是现成的：SimBenchmark（RaiSim/Bullet/ODE/MuJoCo/DART）显示各引擎表现高度 task-dependent；cloth manipulation benchmark 发现 quasi-static 任务大家误差都低，但 dynamic 任务<i>没有任何引擎能精确匹配</i>（MuJoCo 相对最好）。这正是 EOS 不去声称"backend parity"、而把跨引擎差异当成<b>需要记账的证据</b>的根本原因（Part 7 会把这件事做到极致）。</p>
+        </div>
+
+        <div class="callout note">
+          <div class="c-h">EOS 的 core 一个引擎都不依赖</div>
+          <p>这一节点了五个重量级引擎，但有一件事要说清楚：<span class="term">EmbodiedEval OS</span> 的 <b>core 对它们没有任何依赖</b>。<code>pyproject.toml</code> 里 <code>embodied-eval-os</code> 的运行时依赖<i>只有</i> <span class="term">pyyaml</span> 和 <span class="term">typing-extensions</span>——所有仿真引擎都是 <b>adapter 侧的可选依赖</b>。你可以 <code>pip install</code> 整个 EOS、跑通 <code>examples/run_smoke.py</code>（走 <code>dummy_backend</code> 的 SemanticProxyBackend）、读一条完整 trace，而<b>不装任何一个引擎</b>。引擎是插上来的，不是焊死的——这就是"backend-composable"在依赖图上的字面意思。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>三点：（1）每个"引擎"都是一束组件——Isaac 至少分 Isaac Sim / Isaac Lab / PhysX / RTX 四层，EBench 用的是 Isaac Sim 4.1；MuJoCo 是优化式软接触 + MJX/Warp 两条 GPU 路；Genesis 0.4.4 多 solver、43M FPS、v0.3 仅 MPM+Tool 可微；PyBullet 是轻量 Zlib 基线；Newton 在 2026 仍是 beta、基于 Warp+OpenUSD、集成 MuJoCo Warp；（2）同任务跨引擎结果本就不同（接触是 NCP，各自松弛），所以差异要记账、不声称 parity；（3）EOS 的 core 运行时只依赖 pyyaml + typing-extensions，引擎全在 adapter 侧可选。</p>
+        <p>下一节，我们把"组件能力声明"和"这次实际测到了什么"这两层彻底分开——能力矩阵是一本<b>账本</b>，不是一个分数。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

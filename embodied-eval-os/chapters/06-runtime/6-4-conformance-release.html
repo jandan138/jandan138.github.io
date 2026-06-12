@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Conformance、就绪与 release claim levels · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="6-4">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 6 · Runtime · 6-4</div>
+        <h1>Conformance、就绪与 release claim levels</h1>
+        <p class="lede">前三节我们把 runtime 的"怎么跑"讲完了：两条路径、八个动词、一条 live 证据链。这一节换个视角——<i>治理</i>。一个 provider 凭什么算"合格"？一条结果凭什么算"可以发布"？EOS 的答案不是"跑通就行"，而是一把刻度分明的阶梯：从"契约写好了"到"release gate 过了"，每一级都对应一种<b>更强、但仍然有边界</b>的声明。这把阶梯，配上一串 make gate，就是 EOS 防止自己过度宣称的最后一道闸。</p>
+
+        <h2 id="conformance-kit">Conformance kit：按证据质量判，不按 handler 数量判</h2>
+        <p>RPF-7B 关下来的，是一个 fixture-driven 的 <span class="term">provider conformance kit</span>。它的判法是 EOS 哲学的浓缩：给 provider 喂一组固定的 fixture，看它产出的 L3 测量、blocking 行为、artifact 寻址是否符合契约——而<b>不</b>看它底层接了几个仿真器、support matrix 有多宽。</p>
+        <p>这一刀切得很关键。一个朴素但诚实的 provider（产出干净的 L3 证据、缺测量就如实 blocked）conformance 通过；一个号称"支持十个后端"但产出含混、缺测量就填 0 的 provider，conformance 失败。EOS 衡量一个 provider 的，是它<b>证据的质量</b>，不是它覆盖面的广度——这与铁律里"It should not compete on simulator handler count"一脉相承。</p>
+
+        <div class="bridge ev">
+          <div class="c-h"><span class="tag">从评测科学 看</span> conformance kit 就是一份 reproducibility checklist</div>
+          <p>把固定 fixture 喂进 provider、检查它是否产出契约要求的产物——这其实就是评测科学里 reproducibility checklist 的工程化身（Pineau et al., JMLR 2021 的 NeurIPS reproducibility checklist 是同一种精神）。它不问"你结果多好"，只问"你的产出是否齐全、可复现、按规矩 blocked"。Henderson 等人（"Deep RL that Matters", AAAI 2018）反复强调：没有 seed、没有显式的变异来源记录，漂亮的数字毫无意义。conformance kit 就是把这种 gating discipline 前移到 provider 入场的那一刻——先证明你<i>能被审计</i>，再谈你<i>测出了什么</i>。</p>
+        </div>
+
+        <h2 id="claim-ladder">release claim levels：由窄到宽的阶梯</h2>
+        <p>EOS 把"这个结果能声称多大的事"做成一把六级阶梯，叙事里<b>不许跳级</b>：</p>
+        <ol>
+          <li><b>contract implemented</b>——契约写好了（代码里有这个 facade / spec）。</li>
+          <li><b>fixture conformance passed</b>——对着固定 fixture 通过了 conformance kit。</li>
+          <li><b>live SDK lane executed</b>——在一个真实物理 SDK 上跑通了一条 live lane（如 RPF-7A 的 MuJoCo）。</li>
+          <li><b>scenario evaluator executed</b>——一个场景 evaluator 真的对一条 trace 出了判定。</li>
+          <li><b>suite diagnostic executed</b>——一个诊断 suite（如 EVL-1 的 10-episode）跑完并出了诊断报告。</li>
+          <li><b>release live gate passed</b>——最严的发布门通过。</li>
+        </ol>
+        <p>这把阶梯最值得记住的，是相邻两级之间那道<i>不能跨的缝</i>：<b>"a live SDK lane is not a benchmark score, and a scenario evaluator result is not backend parity."</b> 你跑通了一条 live lane（第 3 级），不代表你有了一个 benchmark 分数（那要到第 5 级且通过 forbidden-claim 检查）；一个 evaluator 出了判定（第 4 级），不代表两个后端物理等价（backend parity 根本不在这把阶梯上——它是被显式列入 required non-claims 的禁项）。每往上一级，你能说的话变宽一点，但每一级都要显式声明它<i>仍然不</i>声称什么：backend / trajectory / contact-force parity、visual/pixel parity、model superiority、official benchmark reproduction、hardware readiness、real-world safety、MetaSim 集成……</p>
+        <p>这把阶梯你在 <a href="../01-foundations/1-2-claim-boundary.html">1.2</a> 已经用 <span class="term">claim-ladder</span> widget 完整玩过一遍——这里只是回到它在 runtime 语境下的落点：RPF 的每一关、EVL 的每一步，都精确地停在阶梯的某一级上，并诚实地标注自己<i>还没</i>到哪一级。</p>
+
+        <h2 id="make-gates">make gate：把纪律编进 CI</h2>
+        <p>阶梯不能只活在文档里，它得有牙齿。EOS 把这串纪律编成一组 <span class="term">make</span> gate，由窄到宽地守在不同节点上（定义就在仓库 <code>Makefile</code> 里）：</p>
+
+        <div class="code" data-lang="bash"><div class="code-h"><span class="fn">Makefile</span><button class="cp">复制</button></div><pre><code>make check          # smoke + 全量 test + leakage + architecture-debt + profile-check
+make check-local    # 快速 commit gate：smoke + non-scenario test + leakage
+                    #   + state-v2-migration + architecture-debt + profile + diff-check
+make check-pr       # 在 check-local 基础上加 scenario-light 测试
+make check-merge    # check + state-v2-migration，合并前最后一道
+make release-live-gate       # 构建并校验 live release manifest
+make release-live-sdk-gate   # 构建并校验 live SDK release manifest</code></pre></div>
+
+        <p>注意这串 gate 的<i>梯度</i>：<code>check-local</code> 是 commit 时的快门，只跑非场景测试求快；<code>check-pr</code> 加进 scenario-light，<code>check-merge</code> 再压一道 state-v2 迁移检查；而两个 <code>release-live-*-gate</code> 站在阶梯顶端——它们对应的正是上面 claim ladder 的第 6 级（release live gate）与第 3 级（live SDK lane）的发布化身，要求构建出一份 live release manifest 并校验它。你越往发布走，门越严，能声称的事也越大——但每一道门都不让你绕过证据。</p>
+        <p>别忘了这串 gate 背后还有更细的脚本在执法：<span class="term">check_core_leakage.py</span> 扫 core 禁词、<code>check_architecture_debt.py</code> 与 <code>check_required_live_lanes.py</code> 执行 no-silent-fallback 与必备 live lane。gate 是"门"，脚本是"门卫"。</p>
+
+        <div class="callout claim">
+          <div class="c-h">通过一个 gate 证明了什么 / 还不能证明什么</div>
+          <p>过了 <code>make check-pr</code>，<b>证明</b>的是：这次改动没污染 core、没引入沉默退化、profile 与 state-v2 契约没破、smoke 与轻量场景测试通过——也就是"它没把地基弄塌"。它<i>不</i>证明任何评测结论：conformance passed 不是 live SDK executed，live SDK executed 不是 benchmark score，benchmark score 也不是 backend parity 或 real-world safety。这把阶梯与这串 gate 的全部意义，就是让每一次"通过"都精确地停在它该停的那一级，既不少说（缺测量要 blocked），也<b>绝不多说</b>（不许把"门过了"读成"结论成立"）。这正是 EOS 反复强调的那句——release gate 守的是边界，不是荣誉。</p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>EOS 用 fixture-driven 的 <span class="term">conformance kit</span>（RPF-7B）按<b>证据质量</b>而非 handler 数量判一个 provider；用一把六级 <span class="term">release claim levels</span> 阶梯（contract → fixture conformance → live SDK lane → scenario evaluator → suite diagnostic → release live gate）规定每一级能声称多大的事、且不许跳级；再用一串 <span class="term">make</span> gate（<code>check / check-local / check-pr / check-merge / release-live-gate / release-live-sdk-gate</code>）把这套纪律编进 CI。一句话收束整个 Part 6：runtime 允许你换路径、换后端、爬阶梯，但每一步都被钉在"你这一步到底证明了什么"上——这就是一台评测 OS 与一个 benchmark 的根本区别。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>

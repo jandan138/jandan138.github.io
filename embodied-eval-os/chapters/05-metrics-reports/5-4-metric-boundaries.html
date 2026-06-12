@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>度量的 claim boundary 与聚合陷阱 · EmbodiedEval OS 教程</title>
+  <link rel="stylesheet" href="../../assets/css/book.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+</head>
+<body data-root="../../" data-section="5-4">
+  <header class="topbar">
+    <button class="iconbtn menu-toggle" aria-label="menu">☰</button>
+    <a class="brand" href="../../index.html"><b>EmbodiedEval OS</b> · 教程</a>
+    <span class="spacer"></span>
+    <button id="search-btn">🔍 <kbd>/</kbd></button>
+    <button class="iconbtn" id="theme-toggle" aria-label="theme">☾</button>
+    <div class="progress"></div>
+  </header>
+  <div class="scrim"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main>
+      <article class="article">
+        <div class="eyebrow">Part 5 · Metrics &amp; Reports · 5-4</div>
+        <h1>度量的 claim boundary 与聚合陷阱</h1>
+        <p class="lede">前三节把度量造了出来、画成了像、绑到了模型上。这一节做相反的事——给每个度量<b>钉上边界</b>。一个度量能<i>算出来</i>不等于它<i>证明</i>了你想说的事；而把一堆度量<i>加起来</i>，更是统计学上布满陷阱的动作。这是全章纪律的收口：每个 metric 都带 claim boundary，每次 aggregation 都得带分母和逐轴状态——否则它就不是强证据。</p>
+
+        <h2 id="metric-boundaries">度量层面的四条 claim boundary</h2>
+        <p>5.1 我们说过"挂对了轴 ≠ 测得准"。现在把这句话拆成四条具体的、写进文档的边界。每一条都是"左边那个数 ≠ 右边那个能力"：</p>
+
+        <div class="callout claim">
+          <div class="c-h">semantic liquid proxy ≠ real fluid understanding</div>
+          <p>scientific_lab 里 <code>liquid_volume_error_ul</code> 跑在一个 <span class="term">reduced semantic liquid model</span> 上——一个语义代理，不是真实流体动力学（pack 的 non-goals 明确排除 high-fidelity CFD / true microfluidics）。它<b>证明</b>"在这个代理模型下，体积误差是 X 微升"；它<b>不</b>证明模型理解了真实液体的流动、表面张力或飞溅。代理度量的精度，是<i>代理内</i>的精度。</p>
+        </div>
+
+        <div class="callout claim">
+          <div class="c-h">simulator-only hazard ≠ real-world safety</div>
+          <p>wetlab_safety 的 <span class="term">DDR</span>（dangerous action detection rate）等危险度量，跑在 simulation-only / abstract hazard trace 上（安全数据规则禁止采真实危险数据）。一个高 DDR <b>证明</b>"在仿真危险事件流里，模型检出了这么多危险动作"；它<b>不</b>是 real-world safety certification。"仿真里能预警"和"现实中可安全部署"之间隔着一整道未经外部安全评审的鸿沟。</p>
+        </div>
+
+        <div class="callout claim">
+          <div class="c-h">EBench-compatible success ≠ scientific-lab capability</div>
+          <p>一个 home_manipulation 任务上的 EBench 兼容成功率，<b>证明</b>的是这个 adapter 链路通了、这个家务任务做成了；它<b>不</b>能跨场景外推成"这个模型具备科学实验室能力"。家务里把蛋挞放进微波炉，和实验室里精确移液，是两个不同 construct——一个的高分不为另一个背书。</p>
+        </div>
+
+        <div class="callout claim">
+          <div class="c-h">cross-render robustness ≠ cross-physics robustness</div>
+          <p>这是最容易被混为一谈的一条。模型在<i>换渲染器</i>（同一份物理，不同 RTX/Blender/MuJoCo renderer）下保持稳定，<b>证明</b>的是视觉鲁棒性；它<b>不</b>证明<i>换物理引擎</i>（PhysX vs MuJoCo physics）下也稳。视觉泛化和动力学泛化是 generalization 轴里两个必须分开报的子维度（回看 <a href="5-2-capability-profile.html">5.2</a> 那个被拆成 <code>render_split</code> / <code>physics_split</code> 的字段）——靠的正是第 2 章那套<b>六组件后端拆分</b>，只改一个组件才能把这两种鲁棒性分离开。</p>
+        </div>
+
+        <h2 id="aggregation">聚合陷阱：把数加起来之前先停一下</h2>
+        <p>就算每个度量自己的边界都钉好了，把它们<i>聚合</i>成一个面向人的结论时，新的麻烦才开始。EOS 的报告纪律基本就是为了堵住这几个洞：</p>
+        <ul>
+          <li><b>no single scalar</b>——前面说过，不许塌成一个总分。任何加权和都偷偷编码了价值判断。</li>
+          <li><b>partial credit</b>——一个长程任务做了 80% 就中断，"成功率"该记 0、记 0.8、还是记一个分阶段向量？不同记法给出截然不同的画像，记法本身必须被声明。</li>
+          <li><b>weighting</b>——把 hazard 轴和 task_outcome 轴怎么加权，等于在说"漏报一次危险相当于失败几次任务"——这是政策，不是测量。</li>
+          <li><b>Simpson's paradox</b>——分组内每组都是模型 A 占优，合并后却可能是 B 占优，只因各组的样本量/难度不同。</li>
+        </ul>
+
+        <div class="callout warn">
+          <div class="c-h">Simpson 悖论怎么咬人</div>
+          <p>设模型 A 在"简单 split"上 90/100，在"难 split"上 5/50；模型 B 在简单上 8/10，难上 40/100。逐 split 看，难 split 上 B（40%）远胜 A（10%），简单 split 上也是 B（80%）≈ A（90%）。但若<i>不看分母</i>直接合并成总成功率，A 是 95/150≈63%，B 是 48/110≈44%——A 反超。<b>聚合方向一翻，结论就反</b>。这正是为什么 CapabilityProfile 的每根轴都<i>必须</i>携带它的分母 <code>n</code> 和 split，而不是只报一个比率。</p>
+        </div>
+
+        <div class="bridge ev">
+          <div class="c-h"><span class="tag">从评测科学 看</span> 聚合是构念效度的最后一道考验</div>
+          <p>这一节其实是全书 <span class="term">construct validity</span> 主线（Jacobs &amp; Wallach, FAccT 2021）的收口。一个度量的 operationalization gap，不止发生在它<i>测什么</i>，也发生在它被<i>怎么聚合</i>——一个有效的逐项度量，经一次错误聚合就能产出无效结论（Simpson 悖论就是这种"聚合层的失效"）。Raji et al.（NeurIPS 2021）批评的"Everything in the Whole Wide World Benchmark"，本质也是把异质子任务不当地汇成一个普适分。而要让聚合可被复核，报告就得带齐分母、随机性与显著性——这正是 reproducibility 文献（Henderson et al., AAAI 2018，"Deep RL that Matters"；Pineau et al., JMLR 2021 的复现清单）反复要求的。EOS 把这些要求做成了硬约束：<b>报告必须带分母与逐轴状态</b>。</p>
+        </div>
+
+        <h2 id="denominators">报告必须带分母与逐轴状态</h2>
+        <p>所以 EOS 的报告纪律不是"鼓励"，是"必须"。每份诊断报告要携带一组分母与计数，让任何一个聚合数都能被还原、被审计：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">报告必带的分母与状态（节选）</span><button class="cp">复制</button></div><pre><code>runtime_execution_rate      model_action_valid_rate
+control_acceptance_rate     projection_ready_rate
+evaluator_pass_rate         render_capture_rate
+artifact_linkage_failures
+blocked_missing_measurement / blocked_missing_state / blocked_missing_artifact / ...
+每根能力轴：value + n + status(exact|approximate|partial|...|blocked|unsupported)</code></pre></div>
+        <p>这些不是装饰。<code>scripts/check_architecture_debt.py</code> 与 <code>scripts/check_required_live_lanes.py</code> 会在 CI 里强制它们存在——一个缺了分母、或把缺测量偷偷填成 0 的报告，过不了闸。呼应铁律三的那句话：缺证据要变成显式的 <code>blocked_*</code> 状态，<b>绝不</b>变成 <code>0.0 / success=true / score=1.0</code>。一个没有分母的比率，和一个没标 claim boundary 的度量一样，<i>不是强证据</i>。</p>
+
+        <div class="callout claim">
+          <div class="c-h">这一章合起来证明了什么 / 没证明什么</div>
+          <p>整个第 5 章<b>证明</b>的是：EOS 能把异构场景的度量归并到稳定的能力轴、按家族和可见性模式诚实地标注每个分数、并为每个度量与每次聚合钉上边界与分母。它<b>没有</b>、也<b>不许</b>产出任何脱离这些边界的论断——没有综合能力总分，没有 model superiority，没有从仿真度量直接外推的 real-world safety。度量的价值，恰恰在于它<i>拒绝</i>过度宣称的那部分。这就是 EOS 反复说的那句话的落地：<b>差异是证据，不是能力面；一个没有边界的数字，不是结论。</b></p>
+        </div>
+
+        <h2 id="takeaway">这一节带走的</h2>
+        <p>三点：（1）每个度量带<b>四条 claim boundary</b>——semantic liquid proxy ≠ 真流体、simulator-only hazard ≠ 真安全、EBench success ≠ 科学实验室能力、cross-render ≠ cross-physics 鲁棒；（2）<b>聚合本身布满陷阱</b>——no single scalar、partial credit、weighting、Simpson 悖论，结论会随聚合方向翻转；（3）因此报告<b>必须带分母与逐轴状态</b>，由 CI 脚本强制，缺证据走 <code>blocked_*</code> 而非填 0。</p>
+        <p>第 5 章到此收束。你现在能把一份 EOS 报告从度量一直读到边界——下一部分（<a href="../06-runtime/6-1-two-paths.html">Part 6 · Runtime</a>），我们走进真正产出这些 trace 与报告的运行时：两条评测路径、RPF 八动词、live model loop。</p>
+      </article>
+    </main>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="search-overlay" id="search-overlay">
+    <div class="search-box">
+      <input id="search-input" placeholder="搜索小节标题、术语…（↑↓ 选择，Enter 跳转，Esc 关闭）" />
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="../../content.js"></script>
+  <script src="../../assets/js/widgets/registry.js"></script>
+  <script src="../../assets/js/widgets/capability-radar.js"></script>
+  <script src="../../assets/js/widgets/core-placement.js"></script>
+  <script src="../../assets/js/widgets/claim-ladder.js"></script>
+  <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
+  <script src="../../assets/js/widgets/backend-composer.js"></script>
+  <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/layer-stack.js"></script>
+  <script src="../../assets/js/widgets/state-normalization.js"></script>
+  <script src="../../assets/js/widgets/trace-anatomy.js"></script>
+  <script src="../../assets/js/widgets/tensorstate-trap.js"></script>
+  <script src="../../assets/js/widgets/rpf-verbs.js"></script>
+  <script src="../../assets/js/widgets/qpos-remap.js"></script>
+  <script src="../../assets/js/widgets/divergence-trace.js"></script>
+  <script src="../../assets/js/widgets/hazard-levels.js"></script>
+  <script src="../../assets/js/book.js"></script>
+</body>
+</html>
