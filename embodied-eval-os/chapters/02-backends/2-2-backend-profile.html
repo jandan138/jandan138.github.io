@@ -25,10 +25,46 @@
       <article class="article">
         <div class="eyebrow">Part 2 · Backend Composability · 2-2</div>
         <h1>Backend profile 与 capability tier</h1>
-        <p class="lede">上一节我们在概念上把后端拆成了六个组件。这一节把概念落进代码：EOS 用两个 <span class="term">frozen dataclass</span>——<span class="term">BackendProfile</span> 和 <span class="term">ComponentProfile</span>——把"组合"变成一份可校验、可哈希、可原样写进每条 trace 的声明；用一个 <span class="term">CapabilityTier</span> 枚举给每个组件的能力<i>诚实地</i>定级。我们会逐行读真实代码，再把最小的 <code>dummy_backend.yaml</code> 整份拆开看，最后对照更"富"的 <code>mujoco_autobio.yaml</code>。</p>
+        <p class="lede">上一节我们在<i>概念上</i>把后端拆成了六个组件。这一节要回答两个很实在的问题：这"一束组件"在代码里到底长什么样？以及——怎么让它<b>诚实</b>地说出自己每一格能做到几分？我们会从一个具体的困惑出发，一步步把 <span class="term">BackendProfile</span> 搭起来，不急着丢代码。</p>
 
-        <h2 id="two-dataclasses">两个 dataclass：组件束的代码形态</h2>
-        <p>六个组件落地后，长这样（真实文件，逐字未删）：</p>
+        <h2 id="motivation">先问一个问题：两个 0.6 能比吗？</h2>
+        <p>设想两个团队都跑了同一个抓取任务，都来报喜：「我在 <span class="term">MuJoCo</span> 上跑的，success rate 0.6。」听起来可以直接比——0.6 平 0.6。但只要多问几句就会发现地基是虚的：</p>
+        <ul>
+          <li>是 MuJoCo <i>哪个版本</i>？3.1 和 3.3 的接触求解器行为可以不一样。</li>
+          <li>渲染用的是 MuJoCo 自带的 OpenGL，还是接了 Blender？模型看到的图像完全是两回事。</li>
+          <li>有没有 force/torque 传感器？还是只有关节角？</li>
+          <li>动作是关节位置控制，还是末端 delta？</li>
+          <li>那个"液体"是真算的，还是一个简化的语义代理？</li>
+        </ul>
+        <p>换句话说，「在 MuJoCo 上」这五个字<b>什么都没说清</b>。两个 0.6 很可能是在两套不同的世界里得到的，根本不可比。这正是 <a href="2-1-six-components.html">2.1</a> 那条铁律的代价：既然后端是一束组件，那"我在某后端上跑的"这句话，就必须升级成一份<b>写明六格配置的规格单</b>，并且<i>钉</i>在每一个结果旁边。</p>
+
+        <div class="callout note">
+          <div class="c-h">一个好用的类比</div>
+          <p><span class="term">BackendProfile</span> 就是后端的<b>配料表 / 规格铭牌</b>。你买一包食品，包装上印着配料、产地、保质期——不是为了好看，而是为了让"这包东西到底是什么"可追溯、可比较、可追责。EOS 给每个评测结果配的，就是这样一张铭牌：它不保证好吃，但它保证你<i>知道自己吃的是什么</i>。</p>
+        </div>
+
+        <h2 id="from-string-to-component">从一个字符串，到一束有名有姓的组件</h2>
+        <p>最偷懒的写法是 <code>backend = "mujoco"</code>——一个字符串。但字符串塞不下版本、塞不下"这一格只是代理"、塞不下"这一格根本没有"。所以 EOS 先给<b>单个组件</b>一个专门的数据类型，叫 <span class="term">ComponentProfile</span>。先别管完整代码，看一个最小的例子——描述"physics 这一格"：</p>
+        <div class="code" data-lang="python"><div class="code-h"><span class="fn">一个 ComponentProfile（示意）</span><button class="cp">复制</button></div><pre><code>ComponentProfile(
+    name="mujoco",            # 这一格用什么
+    component_type="physics", # 它是六格里的哪一格
+    version="3.3.0",          # 版本是一等公民
+    capabilities={            # 这一格各项能力，分别几分
+        "rigid_body": "native",
+        "articulation": "native",
+        "contact": "native",
+    },
+)</code></pre></div>
+        <p>逐字段读一遍，意图就很清楚了：</p>
+        <ul>
+          <li><code>name</code> + <code>component_type</code>：这一格<i>是什么</i>、<i>属于六格里的哪一格</i>。</li>
+          <li><code>version</code>：可选，但一旦填上就被当真。"PhysX 4.1"和"PhysX 5.0"是两个不同的 ComponentProfile——这就是为什么 <a href="2-3-engines.html">2.3</a> 反复强调版本。</li>
+          <li><code>capabilities</code>：一个小字典，把这一格<i>细分</i>到具体能力（刚体、关节、接触……），每项<b>单独</b>给一个保真度。后面 <a href="#capability-tier">CapabilityTier</a> 这一节就是讲这里填的值。</li>
+        </ul>
+        <p>关键转变是：组件不再是一个裸名字，而是一个<b>有名有姓、带版本、逐项标注保真度</b>的小对象。六格各来一个这样的对象，凑起来就是一个完整后端。</p>
+
+        <h2 id="backend-profile">把六个组件装进一个 BackendProfile</h2>
+        <p><span class="term">BackendProfile</span> 就是"把六格 ComponentProfile 装进同一张铭牌"的容器。现在再看真实代码，就不再是天书了（真实文件，逐字未删）：</p>
         <div class="code" data-lang="python"><div class="code-h"><span class="fn">src/embodied_eval_os/core/specs/backend_profile.py</span><button class="cp">复制</button></div><pre><code>class CapabilityTier(str, Enum):
     """Capability fidelity declaration for a backend component."""
 
@@ -69,32 +105,56 @@ class BackendProfile:
             "control": self.control.name if self.control else None,
             "process_runtime": self.process_runtime.name if self.process_runtime else None,
         }</code></pre></div>
-        <p>几个设计选择值得停下来看：</p>
+        <p>有了前面的铺垫，三个设计选择现在一眼就懂：</p>
         <ul>
-          <li><b>每个组件都是一个 <span class="term">ComponentProfile</span></b>，而不是一个裸字符串。它带 <code>name</code>、<code>component_type</code>、可选 <code>version</code>、一个 <code>capabilities</code> 字典和自由 <code>metadata</code>。"PhysX 4.1"和"PhysX 5.0"是两个不同的 ComponentProfile——版本是一等公民。</li>
-          <li><b><code>frozen=True</code></b>：profile 一旦构造就不可变，因此可哈希、可安全地当作证据指纹写进 trace。一条 <span class="term">EpisodeTrace</span> 记的是 <code>backend_profile_id</code> 加 <code>backend_components</code> 字典——后端身份是被<i>固定下来的</i>，不会在 run 中途漂移。</li>
-          <li><b><code>platform</code> 是唯一必填项</b>，其余五个组件都可为 <code>None</code>。这本身是一种诚实：一个只做核心 smoke 的后端可以没有真渲染器、没有 process runtime，而 <code>None</code> 明确说"这里什么都没有"，而不是假装有。</li>
-          <li><b><code>component_summary()</code></b> 把六组件压成一个扁平字典，专门给 trace 元数据和报告用——注意它<i>没有</i>把 sensors 列表展开，因为传感器是个列表，单独处理。</li>
+          <li><b><code>platform</code> 是唯一必填项</b>，其余五格都允许是 <code>None</code>。这本身是一种诚实：一个只做核心 smoke 的后端可以<i>没有</i>真渲染器、<i>没有</i> process runtime，而 <code>None</code> 明确说"这里什么都没有"，而不是含糊带过。</li>
+          <li><b><code>sensors</code> 是个列表</b>（其余五格是单个组件）。因为一个后端可以同时挂 RGB、深度、force/torque 好几路传感，单数装不下。</li>
+          <li><b><code>component_summary()</code></b> 把六格压成一个扁平字典，专门喂给 trace 元数据和报告。注意它<i>没有</i>展开 sensors 列表——列表单独处理。</li>
         </ul>
 
-        <h2 id="capability-tier">CapabilityTier：诚实地说"我能做到几分"</h2>
-        <p><span class="term">CapabilityTier</span> 是这套设计里最体现 EOS 哲学的部分。一个组件不是"支持/不支持"的布尔，而是落在五个保真度层级上：</p>
+        <div class="callout note">
+          <div class="c-h">三个 Python 词，别被吓到</div>
+          <p>代码里有几个修饰词，对不熟 Python <span class="term">dataclass</span> 的读者可能扎眼，但意思都很朴素：</p>
+          <p><b><code>@dataclass</code></b>＝"自动生成构造函数的小数据容器"，你只管声明有哪些字段。<b><code>frozen=True</code></b>＝"造好就<i>封存不可改</i>"，像一份盖了章的公证文件；正因为不可改，它才能被<i>哈希</i>（当成唯一指纹）。<b><code>field(default_factory=dict)</code></b>＝"这个字段默认是个空字典/空列表"，只是给默认值的标准写法。</p>
+          <p>为什么非要"封存+可哈希"？因为一条 <span class="term">EpisodeTrace</span> 要把后端身份当<b>证据指纹</b>记下来（<code>backend_profile_id</code> + <code>backend_components</code>）。封存保证了：后端身份在一次 run 里<b>不会中途漂移</b>——你不能跑到一半偷偷把 physics 从 proxy 换成 native 再来邀功。</p>
+        </div>
+
+        <h2 id="capability-tier">CapabilityTier：把"我能做到几分"写进合同</h2>
+        <p>现在回到那个 <code>capabilities</code> 字典里填的值。<span class="term">CapabilityTier</span> 是这套设计里最体现 EOS 哲学的部分：一个组件不是"支持 / 不支持"的布尔，而是落在五个<b>保真度档位</b>上。</p>
         <table>
-          <thead><tr><th>tier</th><th>含义</th></tr></thead>
+          <thead><tr><th>tier</th><th>含义</th><th>什么时候选它</th></tr></thead>
           <tbody>
-            <tr><td><span class="term">NATIVE</span></td><td>引擎原生、全保真地提供这个能力（如 MuJoCo 原生刚体动力学）。</td></tr>
-            <tr><td><span class="term">REDUCED</span></td><td>提供，但是降级/简化版本。</td></tr>
-            <tr><td><span class="term">SEMANTIC_PROXY</span></td><td>只是<i>语义代理</i>——用一个简化模型近似该现象，<b>不是</b>真实物理。reduced liquid model 属于这一层。</td></tr>
-            <tr><td><span class="term">EMULATED</span></td><td>由非原生路径模拟出来。</td></tr>
-            <tr><td><span class="term">UNSUPPORTED</span></td><td>这个组件根本不提供该能力。</td></tr>
+            <tr><td><span class="term">NATIVE</span></td><td>引擎原生、全保真地提供这个能力。</td><td>MuJoCo 原生算的刚体接触。</td></tr>
+            <tr><td><span class="term">REDUCED</span></td><td>提供，但是降级 / 简化版本。</td><td>为了快，关掉了某些精度。</td></tr>
+            <tr><td><span class="term">SEMANTIC_PROXY</span></td><td>只是<i>语义代理</i>——用简化模型近似该现象，<b>不是</b>真实物理。</td><td>reduced liquid model 估液量。</td></tr>
+            <tr><td><span class="term">EMULATED</span></td><td>由非原生路径模拟出来。</td><td>用脚本/别的量推算出来的。</td></tr>
+            <tr><td><span class="term">UNSUPPORTED</span></td><td>这个组件根本不提供该能力。</td><td>dummy 后端不出图像。</td></tr>
           </tbody>
         </table>
-        <p>注意 <code>capabilities</code> 字典的值类型是 <code>CapabilityTier | str</code>——既能用枚举，也能用更细的轴级状态字符串（如 <code>partial</code> / <code>blocked</code>，下一节和 <a href="2-4-capability-ledger.html">2.4</a> 会展开）。关键在于：tier 是一份<b>声明</b>。声明 <code>SEMANTIC_PROXY</code> 等于提前把 claim boundary 钉死——任何基于这个组件的结论，都不许悄悄升格成"真实物理"的结论。</p>
+        <p>核心在于：tier 是一份<b>声明</b>，而且这份声明在评测还没开始时就已经写下了。声明 <code>SEMANTIC_PROXY</code>，等于提前把 <span class="term">claim boundary</span> 钉死——任何基于这个组件的结论，都不许悄悄升格成"真实物理"的结论。下面这个部件让你亲手感受这件事：选一个组件，再在保真度阶梯上挪动，看它<i>立刻</i>把"你可以说什么、不能说什么"卡在哪里。</p>
+
+        <div class="lab">
+          <div class="lab-h"><span class="lab-tag">interactive</span><span class="lab-t">CapabilityTier → 可以说什么 / 不能说什么</span></div>
+          <div class="lab-body" data-widget="fidelity-ladder"></div>
+          <div class="lab-cap">先点上方组件（physics / renderer / sensors / process_runtime），再在阶梯上选一档。注意：tier 一降，"可以说"的话立刻缩水，"不能说"的红线立刻收紧——保真度声明<i>就是</i> claim boundary。</div>
+        </div>
 
         <div class="bridge ev">
           <div class="c-h"><span class="tag">从评测科学 看</span> tier 就是写在合同里的 construct boundary</div>
           <p>测量科学里讲 <span class="term">construct validity</span>：你的指标必须真测到你声称的构念。CapabilityTier 把这条纪律<i>前置</i>到后端声明阶段——还没开始评测，profile 就已经写明"我的 physics 是 semantic_proxy"，于是任何下游报告都不能把这个代理的输出当成真实流体力学证据。这和 Model Cards（Mitchell et al., FAT* 2019）的精神一致：把局限<b>写进规格</b>，而不是埋在脚注里事后辩解。</p>
         </div>
+
+        <h2 id="three-vocabularies">别搞混：三套"状态词"各管一段</h2>
+        <p>这是这一节最容易绕晕的地方，所以单独拎出来讲清楚。EOS 里会出现三套看起来都像"状态"的词，它们<b>分属不同阶段、各管一段</b>，不能混用：</p>
+        <table>
+          <thead><tr><th>词汇</th><th>谁在用</th><th>取值</th><th>回答的问题</th></tr></thead>
+          <tbody>
+            <tr><td><span class="term">CapabilityTier</span></td><td>组件级·声明阶段</td><td>native / reduced / semantic_proxy / emulated / unsupported</td><td>"这一格的<b>保真度</b>是几分？"</td></tr>
+            <tr><td><span class="term-i">axis-level status</span></td><td>证据轴级·实测阶段</td><td>exact / approximate / partial / read_only / opaque_only / unsupported / blocked</td><td>"这一<b>轴证据这次到底拿到没拿到</b>？"（详见 <a href="2-4-capability-ledger.html">2.4</a>）</td></tr>
+            <tr><td><code>claim_boundary</code></td><td>profile / trace 级·自由文本</td><td>一句话</td><td>"基于以上，这份证据<b>能/不能主张</b>什么？"</td></tr>
+          </tbody>
+        </table>
+        <p>一句话记牢三者的关系：<b>CapabilityTier 是<i>声明</i>能做到几分（菜单），axis-level status 是<i>实测</i>这次拿到几分（这一餐实际端上桌的），claim_boundary 是把前两者翻译成人话的<i>边界声明</i>。</b> 你会在 <code>capabilities</code> 字典里同时看到 tier 风格的值（<code>native</code>）和 axis 风格的值（<code>blocked</code>）——这是被允许的（字段类型就是 <code>CapabilityTier | str</code>），但写的时候要清楚自己在表达哪一层。</p>
 
         <h2 id="dummy">最小 profile：dummy_backend.yaml 全文</h2>
         <p>profile 在仓库里以 YAML 落盘，顶层 key 一一对应 dataclass 字段：<code>profile_id / platform / physics / renderer / sensors（列表）/ control / process_runtime / metadata</code>。最小的代表性 profile 是核心 smoke 专用的这一份——它故意"什么都不做真的"，正好用来逐 key 解释：</p>
@@ -129,9 +189,9 @@ metadata:
         <ul>
           <li><code>platform.name: dummy_backend</code>——不是任何真实仿真器，只是一个壳。</li>
           <li><code>physics</code> 的两条能力 <code>rigid_body</code> / <code>articulation</code> 都标 <code>semantic_proxy</code>：它<b>不算</b>真实动力学，只是个语义近似。这一行直接决定了所有基于它的结果的 claim boundary。</li>
-          <li><code>renderer.capabilities.rgb: unsupported</code>——明说"我不出图像"。它<i>没有</i>偷偷返回一张黑图假装成功，而是显式声明不支持。这正是 no-silent-fallback 在后端声明层的体现。</li>
+          <li><code>renderer.capabilities.rgb: unsupported</code>——明说"我不出图像"。它<i>没有</i>偷偷返回一张黑图假装成功，而是显式声明不支持。这正是 <a href="../01-foundations/1-3-no-silent-fallback.html">no-silent-fallback</a> 在后端声明层的体现。</li>
           <li><code>sensors</code> 是个只有一个 <code>name: none</code> 的列表，<code>control</code> 是 <code>direct_delta</code>（直接把动作当成 delta 应用），<code>process_runtime.name: none</code>——没有场景语义状态机。</li>
-          <li><code>metadata</code> 把话挑明：<code>role: core_smoke_only</code>，<code>claim_boundary: no simulator fidelity or benchmark compatibility claim</code>。这个 profile 存在的全部意义就是让 <code>examples/run_smoke.py</code> 能在<b>零仿真器依赖</b>下跑通整条 trace 管线——pyproject 的运行时依赖只有 <code>pyyaml</code> 和 <code>typing-extensions</code>，引擎都在 adapter 侧。</li>
+          <li><code>metadata</code> 把话挑明：<code>role: core_smoke_only</code>，<code>claim_boundary: no simulator fidelity or benchmark compatibility claim</code>。这个 profile 存在的全部意义，就是让 <code>examples/run_smoke.py</code> 能在<b>零仿真器依赖</b>下跑通整条 trace 管线——pyproject 的运行时依赖只有 <code>pyyaml</code> 和 <code>typing-extensions</code>，引擎都在 adapter 侧。</li>
         </ul>
 
         <div class="bridge sm">
@@ -139,23 +199,36 @@ metadata:
           <p>从真实引擎的视角看，<code>dummy_backend</code> 像个笑话——它什么物理都不算。但在 EOS 的证据框架里它完全合法：它<i>诚实地</i>声明了自己每一格的保真度，因此它产出的 trace 仍是有效证据——只不过证据的<b>边界</b>被 profile 卡得死死的。这比一个偷偷返回 <code>success=true</code> 的"高保真"假后端要强得多。诚实的代理 &gt; 不诚实的逼真。</p>
         </div>
 
+        <h2 id="roundtrip">一条 profile 的"来回旅程"</h2>
+        <p>把上面拼起来，你就能看清一份 profile 从代码到证据的完整旅程——这也是把前面所有零件串成一根线的好办法：</p>
+        <div class="code" data-lang="text"><div class="code-h"><span class="fn">BackendProfile 的来回旅程</span><button class="cp">复制</button></div><pre><code>① 构造：六个 ComponentProfile 装进一个 BackendProfile（platform 必填，其余可 None）
+        ↓  frozen=True → 封存、可哈希
+② 落盘：序列化成 configs/backend_profiles/*.yaml（顶层 key 对齐字段）
+        ↓
+③ 压扁：component_summary() → {platform, physics, renderer, control, process_runtime}
+        ↓
+④ 入证：写进每条 EpisodeTrace 的 backend_profile_id + backend_components
+        ↓
+⑤ 约束：metadata.claim_boundary 跟着结果一起走，谁读结果谁就读到边界</code></pre></div>
+        <p>注意第④步：后端身份不是"评测时顺手记一笔"的附属信息，而是被<b>钉进</b>每条 trace 的一等证据。这就是为什么前面要那么在意"封存、可哈希"——只有不可变的指纹，才配当证据。</p>
+
         <h2 id="mujoco">对照：mujoco_autobio.yaml 富在哪</h2>
-        <p>把 dummy 放在一边，看 <code>configs/backend_profiles/mujoco_autobio.yaml</code> 这份"富"profile，能看清同一套 schema 怎么承载真实运行时的全部复杂度：</p>
+        <p>把 dummy 放在一边，看 <code>configs/backend_profiles/mujoco_autobio.yaml</code> 这份"富"profile，能看清<b>同一套 schema</b> 怎么承载真实运行时的全部复杂度：</p>
         <ul>
           <li><b>带版本的真物理</b>：<code>physics.name: mujoco</code>，<code>version: "3.3.0"</code>，<code>rigid_body / articulation / contact</code> 全是 <code>native</code>——真实引擎、真实接触求解。</li>
           <li><b>多个传感器</b>：<code>sensors</code> 列表里有 <code>autobio_rgb_cameras</code>（rgb native）和 <code>autobio_proprioception</code>（joint_state native），印证了"sensors 是列表"的设计。</li>
-          <li><b>一张 <code>interaction_dynamics</code> 子表，大量标 <span class="verdict blocked">blocked</span></b>：<code>contact_force_vectors</code>、<code>contact_force_summary</code>、<code>solver_constraints</code>、<code>plugin_or_process_forces</code>……几乎全是 <code>blocked</code>，每一格都附 <code>reason</code>（例如"WR7B evidence 没有 materialize 接触力向量/单位/坐标系/力的约定"）。这不是"测出来是 0"，而是"这一轴的证据这次没被产出，所以显式 block"——No Silent Fallback 的教科书示范。</li>
+          <li><b>一张 <code>interaction_dynamics</code> 子表，大量标 <span class="verdict blocked">blocked</span></b>：<code>contact_force_vectors</code>、<code>contact_force_summary</code>、<code>solver_constraints</code>、<code>plugin_or_process_forces</code>……几乎全是 <code>blocked</code>，每一格都附 <code>reason</code>。⚠ 注意：这里的 <code>blocked</code> 是上一节讲的<i>axis-level status</i>（实测没拿到这一轴证据），<b>不是</b> CapabilityTier——别和 <code>physics: native</code> 那种"声明"混为一谈。它说的不是"测出来是 0"，而是"这一轴的证据这次没被产出，所以显式 block"——No Silent Fallback 的教科书示范。</li>
           <li><b>富 <code>metadata</code></b>：<code>external_benchmark: AutoBio</code>、<code>anti_corruption_layer: adapters/autobio</code>、<code>reproduction_mode: faithful_runtime_when_requirements_met</code>，外加一整段 <code>limitations</code>（"requires external AutoBio repository…""does not make AutoBio or MuJoCo a core dependency""does not imply official benchmark reproduction without provenance review"）和 <code>faithful_claim_requires</code>（official_assets / official_plugins / external_commit / claim_boundary_review）。</li>
         </ul>
-        <p>同一个 schema，从"全 proxy 的 smoke"到"真 MuJoCo + 一长串显式 blocked 轴 + faithful 复现的前置条件清单"，跨度很大却毫不变形——这正是把后端拆成组件束、每格独立定级带来的表达力。</p>
+        <p>同一个 schema，从"全 proxy 的 smoke"到"真 MuJoCo + 一长串显式 blocked 轴 + faithful 复现的前置条件清单"，跨度很大却<b>毫不变形</b>——这正是把后端拆成组件束、每格独立定级带来的表达力。</p>
 
         <div class="callout claim">
           <div class="c-h">profile 声明 ≠ 结果保证</div>
-          <p>一份 <span class="term">BackendProfile</span> 声明的是"我打算/有能力提供什么保真度"，<b>不是</b>"这次 run 真的产出了什么、真的成功了什么"。<code>physics: native</code> 不等于这条 trace 里抓取成功；<code>interaction_dynamics</code> 里十条全 <code>native</code> 也不等于后端等价或 benchmark 复现。声明（registry）与实测（readiness ledger）是两层，绝不能混为一谈。这条区分是 <a href="2-4-capability-ledger.html">2.4</a> 整节的主题——profile 是<i>菜单</i>，账本才是<i>这一餐实际端上桌的</i>。</p>
+          <p>一份 <span class="term">BackendProfile</span> 声明的是"我打算 / 有能力提供什么保真度"，<b>不是</b>"这次 run 真的产出了什么、真的成功了什么"。<code>physics: native</code> 不等于这条 trace 里抓取成功；<code>interaction_dynamics</code> 里十条全 <code>native</code> 也不等于后端等价或 benchmark 复现。声明（registry）与实测（readiness ledger）是两层，绝不能混为一谈。这条区分是 <a href="2-4-capability-ledger.html">2.4</a> 整节的主题——profile 是<i>菜单</i>，账本才是<i>这一餐实际端上桌的</i>。</p>
         </div>
 
         <h2 id="takeaway">这一节带走的</h2>
-        <p>三点：（1）六组件落进代码是两个 frozen dataclass——<span class="term">BackendProfile</span>（platform 必填，其余可 None）与 <span class="term">ComponentProfile</span>（name + type + version + capabilities + metadata），不可变因此可当证据指纹写进 trace；（2）<span class="term">CapabilityTier</span>（NATIVE / REDUCED / SEMANTIC_PROXY / EMULATED / UNSUPPORTED）把每格能力<i>诚实定级</i>，把 claim boundary 前置到声明阶段；（3）同一份 YAML schema 既能承载零依赖的 <code>dummy_backend</code>，也能承载真 MuJoCo 3.3.0 + 满屏 <code>blocked</code> 轴的 <code>mujoco_autobio</code>。</p>
+        <p>四点：（1）「在某后端上跑的」必须升级成一份写明六格配置的<b>规格铭牌</b>，否则两个 0.6 不可比；（2）铭牌落进代码是两个 frozen dataclass——<span class="term">ComponentProfile</span>（name + type + version + capabilities + metadata）描述单格，<span class="term">BackendProfile</span>（platform 必填、sensors 是列表、其余可 None）装六格，不可变因此可当证据指纹钉进 trace；（3）<span class="term">CapabilityTier</span>（NATIVE / REDUCED / SEMANTIC_PROXY / EMULATED / UNSUPPORTED）把每格能力<i>诚实定级</i>，把 claim boundary 前置到声明阶段；（4）<b>三套状态词各管一段</b>——CapabilityTier 声明保真度、axis-level status 记实测有没有拿到、claim_boundary 把边界写成人话。</p>
         <p>下一节，我们带着这套词汇走出去，逐一看真实引擎——Isaac / MuJoCo / Genesis / PyBullet / Newton——把它们各自映射到这六个组件上。</p>
       </article>
     </main>
@@ -177,6 +250,7 @@ metadata:
   <script src="../../assets/js/widgets/no-silent-fallback.js"></script>
   <script src="../../assets/js/widgets/backend-composer.js"></script>
   <script src="../../assets/js/widgets/capability-ledger.js"></script>
+  <script src="../../assets/js/widgets/fidelity-ladder.js"></script>
   <script src="../../assets/js/widgets/layer-stack.js"></script>
   <script src="../../assets/js/widgets/state-normalization.js"></script>
   <script src="../../assets/js/widgets/trace-anatomy.js"></script>
