@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A research preview of executable semantic parsing for underspecified simulation instructions.">
+  <title>When “Soft” Is Not a Number</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to content</a>
+
+  <header class="site-header">
+    <nav class="nav-shell" aria-label="Primary navigation">
+      <a class="wordmark" href="#top" aria-label="When Soft Is Not a Number, home">
+        <span class="wordmark-mark" aria-hidden="true">{ }</span>
+        <span>Executable semantics</span>
+      </a>
+      <div class="nav-links">
+        <a href="#problem">Problem</a>
+        <a href="#pipeline">System</a>
+        <a href="#decisions">Decisions</a>
+      </div>
+    </nav>
+  </header>
+
+  <main id="main-content">
+    <section class="hero" id="top" aria-labelledby="page-title">
+      <div class="hero-copy">
+        <p class="eyebrow">Executable semantic parsing for simulation</p>
+        <h1 id="page-title">When <span>“Soft”</span> Is Not a Number</h1>
+        <p class="lede">
+          Natural-language requests often name a behavior without specifying the
+          numbers a simulator needs. We study a safer interface: predict only
+          supported constraints, then let a deterministic compiler decide whether
+          the request is ready to run.
+        </p>
+        <p class="status-line">
+          <span aria-hidden="true"></span>
+          Implemented protocol/system preview · empirical evaluation not yet available
+        </p>
+      </div>
+
+      <div class="trace-card" aria-label="Schematic instruction-to-decision trace">
+        <div class="trace-heading">
+          <span>Instruction trace</span>
+          <span class="schematic-label">schematic</span>
+        </div>
+        <blockquote>“Make the material soft.”</blockquote>
+        <div class="trace-rail" aria-hidden="true">
+          <div class="trace-point">
+            <span class="point-label">one guessed value</span>
+            <span class="point-cross">×</span>
+          </div>
+          <div class="trace-interval">
+            <span class="interval-line"></span>
+            <span class="interval-label">registered constraint interval</span>
+          </div>
+        </div>
+        <div class="contract-mini">
+          <span class="code-key">IntentContract</span>
+          <dl>
+            <div><dt>property</dt><dd>deformability</dd></div>
+            <div><dt>constraint</dt><dd>bounded range</dd></div>
+            <div><dt>support</dt><dd>check before execution</dd></div>
+          </dl>
+        </div>
+        <div class="trace-outcomes" aria-label="Possible compiler outcomes">
+          <span class="execute">EXECUTE</span>
+          <span class="clarify">CLARIFY</span>
+          <span class="reject">REJECT</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="problem-section" id="problem" aria-labelledby="problem-title">
+      <div class="section-number" aria-hidden="true">01</div>
+      <div class="section-heading">
+        <p class="eyebrow">The representation problem</p>
+        <h2 id="problem-title">Why a single point can overcommit</h2>
+      </div>
+      <div class="problem-grid">
+        <article class="problem-card point-card">
+          <p class="card-kicker">Point prediction</p>
+          <div class="point-visual" aria-hidden="true">
+            <span class="axis"></span>
+            <span class="single-point"></span>
+          </div>
+          <h3>False precision</h3>
+          <p>A fluent instruction can still leave the numeric configuration underdetermined.</p>
+        </article>
+        <article class="problem-card interval-card">
+          <p class="card-kicker">Constraint prediction</p>
+          <div class="interval-visual" aria-hidden="true">
+            <span class="axis"></span>
+            <span class="valid-region"></span>
+          </div>
+          <h3>Explicit support</h3>
+          <p>An interval, set, or relation preserves what the language supports—and no more.</p>
+        </article>
+        <aside class="principle-card">
+          <p class="principle-mark" aria-hidden="true">≠</p>
+          <p><strong>Semantic confidence</strong> is not permission to invent a simulator parameter.</p>
+        </aside>
+      </div>
+    </section>
+
+    <section class="pipeline-section" id="pipeline" aria-labelledby="pipeline-title">
+      <div class="section-number" aria-hidden="true">02</div>
+      <div class="section-heading">
+        <p class="eyebrow">System boundary</p>
+        <h2 id="pipeline-title">Language proposes. The compiler disposes.</h2>
+        <p>
+          The learned component emits a typed <span class="inline-code">IntentContract</span>.
+          A deterministic, schema/range-checked contract boundary then controls what can
+          reach Genesis.
+        </p>
+      </div>
+
+      <ol class="pipeline" aria-label="Executable semantic parsing pipeline">
+        <li>
+          <span class="step-index">A</span>
+          <div>
+            <p class="step-label">Natural language</p>
+            <h3>Underspecified intent</h3>
+            <p>Behavioral words, context, and requested scene changes.</p>
+          </div>
+        </li>
+        <li>
+          <span class="step-index">B</span>
+          <div>
+            <p class="step-label">Semantic parser</p>
+            <h3>Supported constraints</h3>
+            <p>Typed fields, bounds, relations, and explicit missing information.</p>
+          </div>
+        </li>
+        <li>
+          <span class="step-index">C</span>
+          <div>
+            <p class="step-label">Deterministic compiler</p>
+            <h3>Guarded decision</h3>
+            <p>Schema and range checks select an outcome before configuration.</p>
+          </div>
+        </li>
+        <li>
+          <span class="step-index">D</span>
+          <div>
+            <p class="step-label">Simulation boundary</p>
+            <h3>Genesis, conditionally</h3>
+            <p>Only an accepted contract can produce a numeric configuration.</p>
+          </div>
+        </li>
+      </ol>
+    </section>
+
+    <section class="decision-section" id="decisions" aria-labelledby="decision-title">
+      <div class="section-number" aria-hidden="true">03</div>
+      <div class="section-heading decision-heading">
+        <div>
+          <p class="eyebrow">Interactive decision boundary</p>
+          <h2 id="decision-title">Three outcomes, one explicit gate</h2>
+        </div>
+        <p>Select an outcome to inspect the compiler’s role. These are system semantics, not reported evaluation results.</p>
+      </div>
+
+      <div class="decision-console">
+        <div class="outcome-tabs" role="group" aria-label="Compiler outcomes">
+          <button class="outcome-button execute is-active" type="button" data-outcome="execute" aria-controls="outcome-detail" aria-pressed="true">
+            <span class="button-code">01</span>
+            <span>EXECUTE</span>
+          </button>
+          <button class="outcome-button clarify" type="button" data-outcome="clarify" aria-controls="outcome-detail" aria-pressed="false">
+            <span class="button-code">02</span>
+            <span>CLARIFY</span>
+          </button>
+          <button class="outcome-button reject" type="button" data-outcome="reject" aria-controls="outcome-detail" aria-pressed="false">
+            <span class="button-code">03</span>
+            <span>REJECT</span>
+          </button>
+        </div>
+
+        <article class="outcome-detail execute" id="outcome-detail" aria-live="polite">
+          <div class="detail-status">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span id="outcome-label">Contract accepted</span>
+          </div>
+          <h3 id="outcome-title">Enough supported information to compile</h3>
+          <p id="outcome-copy">All required fields are present, typed, and within configured bounds. The compiler may construct a numeric configuration for Genesis.</p>
+          <dl>
+            <div><dt>Gate</dt><dd id="outcome-gate">schema + range</dd></div>
+            <div><dt>Next action</dt><dd id="outcome-action">compile configuration</dd></div>
+          </dl>
+        </article>
+      </div>
+    </section>
+
+    <section class="scope-section" aria-labelledby="scope-title">
+      <div>
+        <p class="eyebrow">Research scope</p>
+        <h2 id="scope-title">A protocol for earning execution</h2>
+      </div>
+      <p>
+        The current artifact defines the contract representation, compiler outcomes,
+        benchmark protocol, and evidence boundaries. Quantitative comparisons remain
+        pending until the planned empirical evaluation is complete. This is a
+        closed-world research testbed, not material advice or safety certification.
+      </p>
+    </section>
+  </main>
+
+  <footer>
+    <p>Research preview · July 2026</p>
+    <p>Executable semantics before numeric configuration.</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
