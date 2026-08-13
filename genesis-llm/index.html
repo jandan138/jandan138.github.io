@@ -3,214 +3,198 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="A research preview of executable semantic parsing for underspecified simulation instructions.">
-  <title>When “Soft” Is Not a Number</title>
+  <meta name="description" content="Executable semantic parsing that keeps track of who authorized every simulation parameter.">
+  <title>Who Chose the Number?</title>
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <a class="skip-link" href="#main-content">Skip to content</a>
+  <a class="skip-link" href="#main-content">Skip to the research story</a>
 
-  <header class="site-header">
-    <nav class="nav-shell" aria-label="Primary navigation">
-      <a class="wordmark" href="#top" aria-label="When Soft Is Not a Number, home">
-        <span class="wordmark-mark" aria-hidden="true">{ }</span>
-        <span>Executable semantics</span>
+  <header class="site-header" id="top">
+    <nav class="nav-shell" aria-label="Project navigation">
+      <a class="wordmark" href="#top" aria-label="Who Chose the Number, home">
+        <span class="wordmark-glyph" aria-hidden="true">A</span>
+        <span>Authority / Simulation</span>
       </a>
       <div class="nav-links">
-        <a href="#problem">Problem</a>
-        <a href="#pipeline">System</a>
-        <a href="#decisions">Decisions</a>
+        <a href="#decision">Decision</a>
+        <a href="#showcase">Showcase</a>
+        <a href="#evidence">Evidence</a>
       </div>
+      <span class="nav-status">Submission candidate</span>
     </nav>
   </header>
 
   <main id="main-content">
-    <section class="hero" id="top" aria-labelledby="page-title">
+    <section class="hero" aria-labelledby="page-title">
       <div class="hero-copy">
         <p class="eyebrow">Executable semantic parsing for simulation</p>
-        <h1 id="page-title">When <span>“Soft”</span> Is Not a Number</h1>
-        <p class="lede">
-          Natural-language requests often name a behavior without specifying the
-          numbers a simulator needs. We study a safer interface: predict only
-          supported constraints, then let a deterministic compiler decide whether
-          the request is ready to run.
+        <h1 id="page-title">Who chose<br>the <em>number?</em></h1>
+        <p class="hero-thesis">
+          A plausible value is not necessarily an authorized value. We predict
+          evidence bindings; a deterministic compiler decides whether a simulator
+          may <strong>execute</strong>, must <strong>clarify</strong>, or should
+          <strong>reject</strong>.
         </p>
-        <p class="status-line">
-          <span aria-hidden="true"></span>
-          Implemented protocol/system preview · empirical evaluation not yet available
-        </p>
+        <div class="hero-actions">
+          <a class="primary-link" href="#showcase">Watch the 26-second story <span aria-hidden="true">↓</span></a>
+          <a class="text-link" href="#evidence">See the ranking reversal</a>
+        </div>
       </div>
 
-      <div class="trace-card" aria-label="Schematic instruction-to-decision trace">
-        <div class="trace-heading">
-          <span>Instruction trace</span>
-          <span class="schematic-label">schematic</span>
-        </div>
-        <blockquote>“Make the material soft.”</blockquote>
-        <div class="trace-rail" aria-hidden="true">
-          <div class="trace-point">
-            <span class="point-label">one guessed value</span>
-            <span class="point-cross">×</span>
+      <section class="authority-console" id="decision" aria-labelledby="console-title">
+        <header class="console-header">
+          <span>Authority Rail / live explanation</span>
+          <span class="console-light" aria-hidden="true"></span>
+        </header>
+        <div class="console-body">
+          <p class="console-kicker">Same number. Different authority.</p>
+          <h2 id="console-title">“Make the sphere soft.”</h2>
+
+          <div class="authority-controls" role="group" aria-label="Choose an evidence condition">
+            <button class="authority-button is-active" type="button" data-authority="exact" aria-controls="authority-detail" aria-pressed="true">
+              <span>01</span><strong>Exact</strong><small>number supplied</small>
+            </button>
+            <button class="authority-button" type="button" data-authority="strict" aria-controls="authority-detail" aria-pressed="false">
+              <span>02</span><strong>Strict</strong><small>number missing</small>
+            </button>
+            <button class="authority-button" type="button" data-authority="declared" aria-controls="authority-detail" aria-pressed="false">
+              <span>03</span><strong>Declared</strong><small>policy supplies it</small>
+            </button>
           </div>
-          <div class="trace-interval">
-            <span class="interval-line"></span>
-            <span class="interval-label">registered constraint interval</span>
+
+          <div class="authority-rail" id="authority-rail" data-authority="exact" aria-hidden="true">
+            <span class="rail-language">language</span>
+            <i class="rail-segment one"></i>
+            <span class="rail-evidence">evidence</span>
+            <i class="rail-segment two"></i>
+            <span class="rail-compiler">compiler</span>
+            <i class="rail-segment three"></i>
+            <span class="rail-genesis">Genesis</span>
           </div>
+
+          <article class="authority-detail" id="authority-detail" aria-live="polite">
+            <div>
+              <p class="detail-label">Decision</p>
+              <p class="decision execute" id="authority-decision">EXECUTE</p>
+            </div>
+            <div>
+              <p class="detail-label">Authorized source</p>
+              <p id="authority-source">the user's exact value</p>
+            </div>
+            <div>
+              <p class="detail-label">Why</p>
+              <p id="authority-why">The requested field is bound to evidence already present in the instruction.</p>
+            </div>
+          </article>
         </div>
-        <div class="contract-mini">
-          <span class="code-key">IntentContract</span>
-          <dl>
-            <div><dt>property</dt><dd>deformability</dd></div>
-            <div><dt>constraint</dt><dd>bounded range</dd></div>
-            <div><dt>support</dt><dd>check before execution</dd></div>
-          </dl>
-        </div>
-        <div class="trace-outcomes" aria-label="Possible compiler outcomes">
-          <span class="execute">EXECUTE</span>
-          <span class="clarify">CLARIFY</span>
-          <span class="reject">REJECT</span>
-        </div>
-      </div>
+      </section>
     </section>
 
-    <section class="problem-section" id="problem" aria-labelledby="problem-title">
-      <div class="section-number" aria-hidden="true">01</div>
+    <section class="showcase-section" id="showcase" aria-labelledby="showcase-title">
       <div class="section-heading">
-        <p class="eyebrow">The representation problem</p>
-        <h2 id="problem-title">Why a single point can overcommit</h2>
-      </div>
-      <div class="problem-grid">
-        <article class="problem-card point-card">
-          <p class="card-kicker">Point prediction</p>
-          <div class="point-visual" aria-hidden="true">
-            <span class="axis"></span>
-            <span class="single-point"></span>
-          </div>
-          <h3>False precision</h3>
-          <p>A fluent instruction can still leave the numeric configuration underdetermined.</p>
-        </article>
-        <article class="problem-card interval-card">
-          <p class="card-kicker">Constraint prediction</p>
-          <div class="interval-visual" aria-hidden="true">
-            <span class="axis"></span>
-            <span class="valid-region"></span>
-          </div>
-          <h3>Explicit support</h3>
-          <p>An interval, set, or relation preserves what the language supports—and no more.</p>
-        </article>
-        <aside class="principle-card">
-          <p class="principle-mark" aria-hidden="true">≠</p>
-          <p><strong>Semantic confidence</strong> is not permission to invent a simulator parameter.</p>
-        </aside>
-      </div>
-    </section>
-
-    <section class="pipeline-section" id="pipeline" aria-labelledby="pipeline-title">
-      <div class="section-number" aria-hidden="true">02</div>
-      <div class="section-heading">
-        <p class="eyebrow">System boundary</p>
-        <h2 id="pipeline-title">Language proposes. The compiler disposes.</h2>
+        <p class="eyebrow light">One argument, three physical scenes</p>
+        <h2 id="showcase-title">Execution is earned.<br>Not guessed.</h2>
         <p>
-          The learned component emits a typed <span class="inline-code">IntentContract</span>.
-          A deterministic, schema/range-checked contract boundary then controls what can
-          reach Genesis.
+          Sphere and sand make the authorized paths visible. The cube exposes the
+          important failure: valid-looking JSON can still bind a value to the wrong
+          source, so execution stops before Genesis.
         </p>
       </div>
 
-      <ol class="pipeline" aria-label="Executable semantic parsing pipeline">
-        <li>
-          <span class="step-index">A</span>
-          <div>
-            <p class="step-label">Natural language</p>
-            <h3>Underspecified intent</h3>
-            <p>Behavioral words, context, and requested scene changes.</p>
-          </div>
-        </li>
-        <li>
-          <span class="step-index">B</span>
-          <div>
-            <p class="step-label">Semantic parser</p>
-            <h3>Supported constraints</h3>
-            <p>Typed fields, bounds, relations, and explicit missing information.</p>
-          </div>
-        </li>
-        <li>
-          <span class="step-index">C</span>
-          <div>
-            <p class="step-label">Deterministic compiler</p>
-            <h3>Guarded decision</h3>
-            <p>Schema and range checks select an outcome before configuration.</p>
-          </div>
-        </li>
-        <li>
-          <span class="step-index">D</span>
-          <div>
-            <p class="step-label">Simulation boundary</p>
-            <h3>Genesis, conditionally</h3>
-            <p>Only an accepted contract can produce a numeric configuration.</p>
-          </div>
-        </li>
+      <figure class="video-frame">
+        <video controls preload="metadata" poster="assets/authority-showcase-poster.webp" aria-label="Twenty-six second authority-aware compilation showcase">
+          <source src="assets/authority-showcase.mp4" type="video/mp4">
+          Your browser does not support embedded video.
+        </video>
+        <figcaption>
+          <span>26 seconds</span>
+          <strong>Sphere → Sand → Blocked Cube</strong>
+          <span>Source-bound qualitative showcase</span>
+        </figcaption>
+      </figure>
+
+      <div class="scene-strip" aria-label="Showcase scene outcomes">
+        <article>
+          <span class="scene-index">01 / Sphere</span>
+          <h3>Exact value</h3>
+          <p>The user's number is bound, compiled, and executed.</p>
+          <strong class="scene-outcome execute">EXECUTE</strong>
+        </article>
+        <article>
+          <span class="scene-index">02 / Sand</span>
+          <h3>Missing evidence</h3>
+          <p>The visible rollout is the exact path; an open request would require an authorized source.</p>
+          <strong class="scene-outcome clarify">CLARIFY</strong>
+        </article>
+        <article class="blocked-scene">
+          <span class="scene-index">03 / Cube</span>
+          <h3>Wrong binding</h3>
+          <p>Two slots point to one source. The compiler blocks the call before simulation.</p>
+          <strong class="scene-outcome reject">BLOCKED</strong>
+        </article>
+      </div>
+    </section>
+
+    <section class="evidence-section" id="evidence" aria-labelledby="evidence-title">
+      <header class="evidence-heading">
+        <p class="eyebrow">The result that changes the story</p>
+        <h2 id="evidence-title">A correct action can still take the wrong path.</h2>
+        <p>
+          Ordinary action accuracy mixes together systems that preserve authority
+          and systems that guess terminal decisions directly. Authorized Path
+          Success (APS) counts the decision and, for execution, the complete value,
+          unit, and provenance path.
+        </p>
+      </header>
+
+      <div class="reversal" aria-label="Action accuracy and Authorized Path Success comparison">
+        <div class="metric-column action-column">
+          <p class="metric-name">Action accuracy <span>higher looks better</span></p>
+          <div class="metric-row compiler-control"><span>Normalized Intent + compiler</span><i style="--score: 80.6%"></i><strong>80.6</strong></div>
+          <div class="metric-row baseline-one"><span>Structured uncertainty</span><i style="--score: 75.2%"></i><strong>75.2</strong></div>
+          <div class="metric-row baseline-two"><span>Policy-aware ActionJSON</span><i style="--score: 73.6%"></i><strong>73.6</strong></div>
+          <div class="metric-row ours"><span>Evidence binding + compiler</span><i style="--score: 68.2%"></i><strong>68.2</strong></div>
+        </div>
+        <div class="reversal-mark" aria-hidden="true"><span>ranking</span><strong>↯</strong><span>reverses</span></div>
+        <div class="metric-column aps-column">
+          <p class="metric-name">Authorized Path Success <span>whole path</span></p>
+          <div class="metric-row compiler-control"><span>Normalized Intent + compiler</span><i style="--score: 68.7%"></i><strong>68.7</strong></div>
+          <div class="metric-row ours"><span>Evidence binding + compiler</span><i style="--score: 65%"></i><strong>65.0</strong></div>
+          <div class="metric-row baseline-two"><span>Policy-aware ActionJSON</span><i style="--score: 45.4%"></i><strong>45.4</strong></div>
+          <div class="metric-row baseline-one"><span>Structured uncertainty</span><i style="--score: 43.5%"></i><strong>43.5</strong></div>
+        </div>
+      </div>
+      <p class="metric-note">Mean percentage over three seeds. The two compiler-mediated APS values are not significantly different; both exceed direct action generation.</p>
+    </section>
+
+    <section class="mechanism-section" aria-labelledby="mechanism-title">
+      <div>
+        <p class="eyebrow">The mechanism</p>
+        <h2 id="mechanism-title">Learn the binding.<br>Compile the authority.</h2>
+      </div>
+      <ol class="mechanism-list">
+        <li><span>01</span><div><strong>Parse evidence</strong><p>Predict constraints and the source that licenses each value.</p></div></li>
+        <li><span>02</span><div><strong>Check the contract</strong><p>A deterministic compiler validates fields, ranges, bindings, and policy.</p></div></li>
+        <li><span>03</span><div><strong>Choose the boundary</strong><p>Emit EXECUTE, CLARIFY, or REJECT before numeric configuration reaches Genesis.</p></div></li>
       </ol>
     </section>
 
-    <section class="decision-section" id="decisions" aria-labelledby="decision-title">
-      <div class="section-number" aria-hidden="true">03</div>
-      <div class="section-heading decision-heading">
-        <div>
-          <p class="eyebrow">Interactive decision boundary</p>
-          <h2 id="decision-title">Three outcomes, one explicit gate</h2>
-        </div>
-        <p>Select an outcome to inspect the compiler’s role. These are system semantics, not reported evaluation results.</p>
-      </div>
-
-      <div class="decision-console">
-        <div class="outcome-tabs" role="group" aria-label="Compiler outcomes">
-          <button class="outcome-button execute is-active" type="button" data-outcome="execute" aria-controls="outcome-detail" aria-pressed="true">
-            <span class="button-code">01</span>
-            <span>EXECUTE</span>
-          </button>
-          <button class="outcome-button clarify" type="button" data-outcome="clarify" aria-controls="outcome-detail" aria-pressed="false">
-            <span class="button-code">02</span>
-            <span>CLARIFY</span>
-          </button>
-          <button class="outcome-button reject" type="button" data-outcome="reject" aria-controls="outcome-detail" aria-pressed="false">
-            <span class="button-code">03</span>
-            <span>REJECT</span>
-          </button>
-        </div>
-
-        <article class="outcome-detail execute" id="outcome-detail" aria-live="polite">
-          <div class="detail-status">
-            <span class="status-dot" aria-hidden="true"></span>
-            <span id="outcome-label">Contract accepted</span>
-          </div>
-          <h3 id="outcome-title">Enough supported information to compile</h3>
-          <p id="outcome-copy">All required fields are present, typed, and within configured bounds. The compiler may construct a numeric configuration for Genesis.</p>
-          <dl>
-            <div><dt>Gate</dt><dd id="outcome-gate">schema + range</dd></div>
-            <div><dt>Next action</dt><dd id="outcome-action">compile configuration</dd></div>
-          </dl>
-        </article>
-      </div>
-    </section>
-
     <section class="scope-section" aria-labelledby="scope-title">
-      <div>
-        <p class="eyebrow">Research scope</p>
-        <h2 id="scope-title">A protocol for earning execution</h2>
-      </div>
-      <p>
-        The current artifact defines the contract representation, compiler outcomes,
-        benchmark protocol, and evidence boundaries. Quantitative comparisons remain
-        pending until the planned empirical evaluation is complete. This is a
-        closed-world research testbed, not material advice or safety certification.
+      <p class="scope-label" id="scope-title">What this establishes</p>
+      <p class="scope-claim">A model can predict a plausible action while taking an unauthorized route.</p>
+      <p class="scope-boundary">
+        The reported benchmark is a controlled, one-author, three-template contrast set. The showcase is
+        qualitative evidence of the same decision boundary; it is not a physics-quality
+        score, a rollout success rate, or evidence of broad open-world generalization.
       </p>
     </section>
   </main>
 
   <footer>
-    <p>Research preview · July 2026</p>
-    <p>Executable semantics before numeric configuration.</p>
+    <p>ACL 2027 research project · public author-linked preview</p>
+    <a href="#top">Back to the question <span aria-hidden="true">↑</span></a>
   </footer>
 
   <script src="app.js"></script>
