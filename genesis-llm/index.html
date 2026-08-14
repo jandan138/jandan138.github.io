@@ -19,7 +19,7 @@
       </a>
       <div class="nav-links">
         <a href="#decision">Decision</a>
-        <a href="#showcase">Showcase</a>
+        <a href="#showcase">Explainer</a>
         <a href="#evidence">Evidence</a>
       </div>
       <span class="nav-status">Submission candidate</span>
@@ -28,22 +28,41 @@
 
   <main id="main-content">
     <section class="hero" aria-labelledby="page-title">
+      <video id="hero-video" class="hero-media" muted autoplay playsinline preload="metadata" poster="assets/authority-sand-hero-poster.webp" aria-label="Sand avalanche showing exact, strict, and policy-declared authorization paths">
+        <source src="assets/authority-sand-hero.mp4" type="video/mp4">
+      </video>
+      <div class="hero-shade" aria-hidden="true"></div>
       <div class="hero-copy">
-        <p class="eyebrow">Executable semantic parsing for simulation</p>
+        <p class="eyebrow">One instruction · three authorization paths</p>
         <h1 id="page-title">Who chose<br>the <em>number?</em></h1>
         <p class="hero-thesis">
-          A plausible value is not necessarily an authorized value. We predict
-          evidence bindings; a deterministic compiler decides whether a simulator
-          may <strong>execute</strong>, must <strong>clarify</strong>, or should
-          <strong>reject</strong>.
+          The same plausible value can move sand—or never reach the simulator.
+          What changes is not the number. It is the authority behind it.
         </p>
         <div class="hero-actions">
-          <a class="primary-link" href="#showcase">Watch the 26-second story <span aria-hidden="true">↓</span></a>
+          <a class="primary-link" href="#decision">Trace the decision <span aria-hidden="true">↓</span></a>
           <a class="text-link" href="#evidence">See the ranking reversal</a>
+        </div>
+        <div class="hero-routes" aria-label="Authorization outcomes shown in the film">
+          <span><i class="route-mark exact"></i>Exact <strong>Execute</strong></span>
+          <span><i class="route-mark strict"></i>Open / strict <strong>Clarify</strong></span>
+          <span><i class="route-mark declared"></i>Open / policy <strong>Execute</strong></span>
         </div>
       </div>
 
-      <section class="authority-console" id="decision" aria-labelledby="console-title">
+      <button class="hero-playback" id="hero-playback" type="button" aria-label="Pause hero film" data-state="playing">
+        <span class="playback-icon" aria-hidden="true"></span>
+        <span class="playback-label">Pause film</span>
+      </button>
+    </section>
+
+    <section class="decision-section" id="decision" aria-labelledby="console-title">
+      <div class="decision-intro">
+        <p class="eyebrow">The decision boundary</p>
+        <h2>Same number.<br>Different authority.</h2>
+        <p>A model proposes evidence bindings. A deterministic compiler decides whether a numeric configuration is allowed to cross into Genesis.</p>
+      </div>
+      <section class="authority-console" aria-labelledby="console-title">
         <header class="console-header">
           <span>Authority Rail / live explanation</span>
           <span class="console-light" aria-hidden="true"></span>
@@ -94,7 +113,7 @@
 
     <section class="showcase-section" id="showcase" aria-labelledby="showcase-title">
       <div class="section-heading">
-        <p class="eyebrow light">One argument, three physical scenes</p>
+        <p class="eyebrow light">The 26-second explainer</p>
         <h2 id="showcase-title">Execution is earned.<br>Not guessed.</h2>
         <p>
           Sphere and sand make the authorized paths visible. The cube exposes the
